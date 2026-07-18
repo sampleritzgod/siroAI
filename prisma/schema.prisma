@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  clerkId   String   @unique
+  email     String?  @unique
+  firstName String?
+  lastName  String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations Conversation[]
+  attachments   Attachment[]
+  usageEvents   UsageEvent[]
+}
+
+model Conversation {
+  id             String   @id @default(cuid())
+  userId         String
+  title          String   @default("New Chat")
+  model          String?
+  systemPrompt   String?
+  isPinned       Boolean  @default(false)
+  isArchived     Boolean  @default(false)
+  activeBranchId String?  @unique
+  /** Opaque public share token; null when sharing is off. */
+  shareToken     String?  @unique
+  shareEnabledAt DateTime?
+  /** Branch frozen into the public share view when sharing was enabled. */
+  shareBranchId  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  lastMessageAt  DateTime @default(now())
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branches     Branch[]
+  messages     Message[]
+  attachments  Attachment[]
+  documentChunks DocumentChunk[]
+  activeBranch Branch?         @relation("ConversationActiveBranch", fields: [activeBranchId], references: [id], onDelete: SetNull)
+
+  @@index([userId, lastMessageAt(sort: Desc)])
+  @@index([userId, isPinned, lastMessageAt(sort: Desc)])
+}
+
+/**
+ * A timeline within a conversation.
+ * Root branch: parentBranchId = null.
+ * Child branch: shares ancestor history up to forkFromMessageId, then owns its own messages.
+ */
+model Branch {
+  id                String   @id @default(cuid())
+  conversationId    String
+  parentBranchId    String?
+  forkFromMessageId String?
+  title             String   @default("Main")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  conversation          Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  parent                Branch?       @relation("BranchTree", fields: [parentBranchId], references: [id], onDelete: Cascade)
+  children              Branch[]      @relation("BranchTree")
+  messages              Message[]
+  forkFromMessage       Message?      @relation("BranchForkMessage", fields: [forkFromMessageId], references: [id], onDelete: SetNull)
+  activeForConversation Conversation? @relation("ConversationActiveBranch")
+
+  @@index([conversationId, createdAt])
+  @@index([parentBranchId])
+  @@index([forkFromMessageId])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum MessageStatus {
+  PENDING
+  STREAMING
+  COMPLETE
+  ERROR
+  ABORTED
+}
+
+model Message {
+  id             String        @id @default(uuid())
+  conversationId String
+  branchId       String
+  role           MessageRole
+  status         MessageStatus @default(COMPLETE)
+  content        String        @db.Text
+  parts          Json?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  branch         Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  forkedBranches Branch[]     @relation("BranchForkMessage")
+  attachments    Attachment[]
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([branchId, createdAt(sort: Asc)])
+}
+
+enum AttachmentStatus {
+  UPLOADING
+  READY
+  FAILED
+}
+
+enum AttachmentStorage {
+  LOCAL
+  VERCEL_BLOB
+}
+
+/**
+ * Uploaded file for a conversation. Referenced from message parts via /api/files/{id}.
+ */
+model Attachment {
+  id             String             @id @default(cuid())
+  userId         String
+  conversationId String
+  messageId      String?
+  filename       String
+  mediaType      String
+  sizeBytes      Int
+  storage        AttachmentStorage
+  /** Blob URL or local relative key under .data/uploads */
+  storageKey     String
+  status         AttachmentStatus   @default(UPLOADING)
+  extractedText  String?            @db.Text
+  errorMessage   String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message?        @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  chunks       DocumentChunk[]
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([messageId])
+}
+
+enum UsageKind {
+  CHAT
+  CONSENSUS
+  EMBEDDING
+}
+
+/**
+ * Token / cost metering for production observability.
+ */
+model UsageEvent {
+  id               String    @id @default(cuid())
+  userId           String
+  conversationId   String?
+  kind             UsageKind
+  model            String
+  inputTokens      Int       @default(0)
+  outputTokens     Int       @default(0)
+  totalTokens      Int       @default(0)
+  estimatedCostUsd Float?
+  requestId        String?
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([kind, createdAt(sort: Desc)])
+}
+
+/**
+ * Embedded text chunk for conversation-scoped RAG (pgvector).
+ * embedding is vector(1536) for OpenAI text-embedding-3-small.
+ */
+model DocumentChunk {
+  id             String                       @id @default(cuid())
+  conversationId String
+  attachmentId   String
+  chunkIndex     Int
+  content        String                       @db.Text
+  embedding      Unsupported("vector(1536)")
+  createdAt      DateTime                     @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachment   Attachment   @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+
+  @@unique([attachmentId, chunkIndex])
+  @@index([conversationId])
+  @@index([attachmentId])
+}

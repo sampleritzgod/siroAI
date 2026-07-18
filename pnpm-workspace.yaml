@@ -1,0 +1,10 @@
+packages:
+  - "."
+
+allowBuilds:
+  prisma: true
+  "@prisma/engines": true
+  sharp: true
+  unrs-resolver: true
+  esbuild: true
+  canvas: set this to true or false
