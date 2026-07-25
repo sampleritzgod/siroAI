@@ -207,11 +207,52 @@ function resolveNotebookIdArg(input?: string | FormData): string | undefined {
 }
 
 /**
- * Creates a conversation with a root branch and redirects to it.
- * Uses the user's default notebook when notebookId is omitted.
- * Accepts FormData when used as a <form action> (field: notebookId).
+ * Returns a short preview of the latest message for each conversation id.
  */
-export async function startNewChat(notebookId?: string | FormData) {
+export async function getConversationLastMessagePreviews(
+  conversationIds: string[]
+): Promise<Record<string, string>> {
+  const user = await requireUser();
+  const ids = [...new Set(conversationIds.filter(Boolean))].slice(0, 20);
+  if (ids.length === 0) return {};
+
+  const owned = await prisma.conversation.findMany({
+    where: {
+      id: { in: ids },
+      userId: user.id,
+    },
+    select: { id: true },
+  });
+  const ownedIds = new Set(owned.map((row) => row.id));
+
+  const previews: Record<string, string> = {};
+
+  await Promise.all(
+    ids
+      .filter((id) => ownedIds.has(id))
+      .map(async (id) => {
+        const message = await prisma.message.findFirst({
+          where: {
+            conversationId: id,
+            role: { in: ["USER", "ASSISTANT"] },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { content: true },
+        });
+        if (message?.content?.trim()) {
+          previews[id] = message.content.trim().replace(/\s+/g, " ").slice(0, 120);
+        }
+      })
+  );
+
+  return previews;
+}
+
+/**
+ * Creates a conversation with a root branch and returns it (no redirect).
+ * Useful for client flows that need to attach follow-up state before navigating.
+ */
+export async function createConversation(notebookId?: string | FormData) {
   const user = await requireUser();
 
   const conversation = await createConversationForUser({
@@ -221,6 +262,16 @@ export async function startNewChat(notebookId?: string | FormData) {
 
   await invalidateConversationCaches({ userId: user.id });
   revalidatePath("/");
+  return { id: conversation.id, notebookId: conversation.notebookId };
+}
+
+/**
+ * Creates a conversation with a root branch and redirects to it.
+ * Uses the user's default notebook when notebookId is omitted.
+ * Accepts FormData when used as a <form action> (field: notebookId).
+ */
+export async function startNewChat(notebookId?: string | FormData) {
+  const conversation = await createConversation(notebookId);
   redirect(`/c/${conversation.id}`);
 }
 

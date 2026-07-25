@@ -13,9 +13,7 @@ import { UserButton } from "@clerk/nextjs";
 import { useSidebar } from "@/components/sidebar-context";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
-import { startNewChat } from "@/modules/conversation/actions/conversation-actions";
 import type { ConversationListItem } from "@/modules/conversation/actions/conversation-actions";
-import { ConversationListSection } from "@/modules/conversation/components/conversation-list-section";
 import { updateNotebook } from "@/modules/notebook/actions/notebook-actions";
 import {
   clearActiveNotebookId,
@@ -26,16 +24,13 @@ import {
 } from "@/modules/notebook/active-notebook";
 import { CreateNotebookDialog } from "@/modules/notebook/components/create-notebook-dialog";
 import { DeleteNotebookDialog } from "@/modules/notebook/components/delete-notebook-dialog";
+import { NotebookDashboard } from "@/modules/notebook/components/notebook-dashboard";
 import { NotebookEmptyState } from "@/modules/notebook/components/notebook-empty-state";
 import type { NotebookListItem } from "@/modules/notebook/service";
-import { SourceListSection } from "@/modules/source/components/source-list-section";
 import type { SourceListItem } from "@/modules/source/service";
 
 type NotebookSidebarProps = {
   notebooks: NotebookListItem[];
-  conversations: ConversationListItem[];
-  archivedConversations?: ConversationListItem[];
-  sources: SourceListItem[];
   activeNotebookId: string | null;
   onActiveNotebookChange: (notebookId: string | null) => void;
   onRequestCreateNotebook: () => void;
@@ -43,9 +38,6 @@ type NotebookSidebarProps = {
 
 export function NotebookSidebar({
   notebooks,
-  conversations,
-  archivedConversations = [],
-  sources,
   activeNotebookId,
   onActiveNotebookChange,
   onRequestCreateNotebook,
@@ -61,32 +53,6 @@ export function NotebookSidebar({
     id: string;
     title: string;
   } | null>(null);
-
-  const scopedConversations = useMemo(
-    () =>
-      activeNotebookId
-        ? conversations.filter((item) => item.notebookId === activeNotebookId)
-        : [],
-    [conversations, activeNotebookId]
-  );
-
-  const scopedArchived = useMemo(
-    () =>
-      activeNotebookId
-        ? archivedConversations.filter(
-            (item) => item.notebookId === activeNotebookId
-          )
-        : [],
-    [archivedConversations, activeNotebookId]
-  );
-
-  const scopedSources = useMemo(
-    () =>
-      activeNotebookId
-        ? sources.filter((item) => item.notebookId === activeNotebookId)
-        : [],
-    [sources, activeNotebookId]
-  );
 
   function selectNotebook(notebookId: string) {
     writeActiveNotebookId(notebookId);
@@ -120,7 +86,8 @@ export function NotebookSidebar({
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex w-[min(18rem,85vw)] flex-col border-r border-[var(--border)] bg-[var(--sidebar)] transition-transform duration-200 ease-out",
           "md:static md:z-0 md:w-64 md:translate-x-0 md:shrink-0",
-          open ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+          open ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+          isPending && "opacity-90"
         )}
       >
         <div className="flex h-14 items-center justify-between gap-2 px-4">
@@ -144,53 +111,14 @@ export function NotebookSidebar({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 px-3 pb-3">
-          <form action={startNewChat}>
-            {activeNotebookId ? (
-              <input type="hidden" name="notebookId" value={activeNotebookId} />
-            ) : null}
-            <button
-              type="submit"
-              disabled={isPending || !activeNotebookId}
-              className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-            >
-              New chat
-            </button>
-          </form>
-          <Link
-            href="/consensus"
-            onClick={close}
-            className={cn(
-              "w-full rounded-xl border px-3 py-2.5 text-center text-sm font-medium transition",
-              pathname === "/consensus"
-                ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--surface)]"
-            )}
-          >
-            Consensus
-          </Link>
-          <Link
-            href="/usage"
-            onClick={close}
-            className={cn(
-              "w-full rounded-xl border px-3 py-2.5 text-center text-sm font-medium transition",
-              pathname === "/usage"
-                ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
-                : "border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--surface)]"
-            )}
-          >
-            Usage
-          </Link>
-        </div>
-
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-2 pb-3">
           <div className="flex flex-col gap-1">
             <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-              📒 Notebooks
+              Notebooks
             </p>
 
             <nav
-              className="flex max-h-[40%] flex-col gap-0.5 overflow-y-auto overscroll-contain"
+              className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain"
               aria-label="Notebooks"
             >
               {notebooks.length === 0 ? (
@@ -250,7 +178,6 @@ export function NotebookSidebar({
                                 : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]"
                             )}
                           >
-                            <span aria-hidden="true">📒 </span>
                             {notebook.title}
                           </button>
 
@@ -315,31 +242,39 @@ export function NotebookSidebar({
               + New Notebook
             </button>
           </div>
-
-          {activeNotebookId ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain border-t border-[var(--border)] pt-3">
-              <SourceListSection
-                notebookId={activeNotebookId}
-                sources={scopedSources}
-              />
-
-              <div className="flex min-h-0 flex-col gap-1 border-t border-[var(--border)] pt-3">
-                <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                  Conversations
-                </p>
-                <ConversationListSection
-                  conversations={scopedConversations}
-                  archivedConversations={scopedArchived}
-                  onNavigate={close}
-                />
-              </div>
-            </div>
-          ) : null}
         </div>
 
-        <div className="flex items-center justify-between border-t border-[var(--border)] px-3 py-2">
-          <ThemeToggle />
-          <span className="text-[11px] text-[var(--muted)]">SiroAI</span>
+        <div className="flex flex-col gap-2 border-t border-[var(--border)] px-3 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <ThemeToggle />
+            <span className="text-[11px] text-[var(--muted)]">Settings</span>
+          </div>
+          <div className="flex gap-2">
+            <Link
+              href="/consensus"
+              onClick={close}
+              className={cn(
+                "flex-1 rounded-lg border px-2 py-1.5 text-center text-[11px] font-medium transition",
+                pathname === "/consensus"
+                  ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
+                  : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Consensus
+            </Link>
+            <Link
+              href="/usage"
+              onClick={close}
+              className={cn(
+                "flex-1 rounded-lg border px-2 py-1.5 text-center text-[11px] font-medium transition",
+                pathname === "/usage"
+                  ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
+                  : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Usage
+            </Link>
+          </div>
         </div>
       </aside>
 
@@ -394,7 +329,7 @@ type NotebookShellProps = {
 };
 
 /**
- * Client shell piece: active notebook persistence + empty library state.
+ * Client shell piece: active notebook persistence + notebook workspace layout.
  */
 export function NotebookAppShell({
   notebooks,
@@ -433,15 +368,46 @@ export function NotebookAppShell({
     }
   }, [activeNotebookId, storedNotebookId]);
 
+  const activeNotebook = useMemo(
+    () => notebooks.find((item) => item.id === activeNotebookId) ?? null,
+    [notebooks, activeNotebookId]
+  );
+
+  const scopedConversations = useMemo(
+    () =>
+      activeNotebookId
+        ? conversations.filter((item) => item.notebookId === activeNotebookId)
+        : [],
+    [conversations, activeNotebookId]
+  );
+
+  const scopedArchived = useMemo(
+    () =>
+      activeNotebookId
+        ? archivedConversations.filter(
+            (item) => item.notebookId === activeNotebookId
+          )
+        : [],
+    [archivedConversations, activeNotebookId]
+  );
+
+  const scopedSources = useMemo(
+    () =>
+      activeNotebookId
+        ? sources.filter((item) => item.notebookId === activeNotebookId)
+        : [],
+    [sources, activeNotebookId]
+  );
+
   const showEmptyLibrary = notebooks.length === 0 && pathname === "/";
+  const isWorkspaceRoute = pathname === "/" || pathname.startsWith("/c/");
+  const showDashboard = Boolean(activeNotebook) && isWorkspaceRoute;
+  const isChatRoute = pathname.startsWith("/c/");
 
   return (
     <>
       <NotebookSidebar
         notebooks={notebooks}
-        conversations={conversations}
-        archivedConversations={archivedConversations}
-        sources={sources}
         activeNotebookId={activeNotebookId}
         onActiveNotebookChange={(notebookId) => {
           if (notebookId) {
@@ -452,11 +418,57 @@ export function NotebookAppShell({
         }}
         onRequestCreateNotebook={() => setCreateOpen(true)}
       />
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {showEmptyLibrary ? (
           <NotebookEmptyState onCreate={() => setCreateOpen(true)} />
         ) : (
-          children
+          <>
+            {showDashboard && activeNotebook ? (
+              <section
+                className={cn(
+                  "min-h-0 min-w-0 flex-col border-[var(--border)] bg-[var(--background)]",
+                  // Mobile: dashboard on home, chat-only on conversation routes
+                  isChatRoute ? "hidden lg:flex" : "flex",
+                  "w-full lg:w-[min(28rem,42%)] lg:shrink-0 lg:border-r"
+                )}
+                aria-label="Notebook dashboard"
+              >
+                <NotebookDashboard
+                  notebook={activeNotebook}
+                  notebooks={notebooks}
+                  sources={scopedSources}
+                  conversations={scopedConversations}
+                  archivedConversations={scopedArchived}
+                  onNotebookDeleted={(deletedId) => {
+                    const remaining = notebooks.filter(
+                      (item) => item.id !== deletedId
+                    );
+                    const nextId = resolveActiveNotebookId(remaining, null);
+                    if (nextId) {
+                      writeActiveNotebookId(nextId);
+                    } else {
+                      clearActiveNotebookId();
+                    }
+                    if (pathname.startsWith("/c/")) {
+                      router.push("/");
+                    }
+                    router.refresh();
+                  }}
+                />
+              </section>
+            ) : null}
+
+            <section
+              className={cn(
+                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+                // Mobile: hide the home empty pane while dashboard is the focus
+                showDashboard && !isChatRoute && "hidden lg:flex"
+              )}
+              aria-label={isChatRoute ? "Chat" : "Workspace"}
+            >
+              {children}
+            </section>
+          </>
         )}
       </main>
 

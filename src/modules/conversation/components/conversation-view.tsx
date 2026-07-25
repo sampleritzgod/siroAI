@@ -17,6 +17,10 @@ import { BranchSwitcher } from "@/modules/conversation/components/branch-switche
 import { ChatComposer } from "@/modules/conversation/components/chat-composer";
 import { ChatMessages } from "@/modules/conversation/components/chat-messages";
 import { ShareControls } from "@/modules/conversation/components/share-controls";
+import {
+  clearPendingStarterPrompt,
+  readPendingStarterPrompt,
+} from "@/modules/conversation/pending-starter-prompt";
 
 const PENDING_EDIT_KEY = "siro:pending-edit";
 
@@ -69,6 +73,7 @@ export function ConversationView({
   const [modelId, setModelId] = useState(initialModelId);
   const [forceWebSearch, setForceWebSearch] = useState(false);
   const pendingEditSent = useRef(false);
+  const pendingStarterSent = useRef(false);
 
   // Guard against Fast Refresh / partial prop hydration (models can briefly be undefined).
   const models = modelsProp ?? [];
@@ -171,6 +176,24 @@ export function ConversationView({
     sessionStorage.removeItem(PENDING_EDIT_KEY);
     void sendMessage({ text: pending.text });
   }, [conversationId, branchId, sendMessage]);
+
+  useEffect(() => {
+    if (pendingStarterSent.current || pendingEditSent.current) return;
+    if (initialMessages.length > 0) return;
+
+    const pending = readPendingStarterPrompt();
+    if (
+      !pending ||
+      pending.conversationId !== conversationId ||
+      !pending.text.trim()
+    ) {
+      return;
+    }
+
+    pendingStarterSent.current = true;
+    clearPendingStarterPrompt();
+    void sendMessage({ text: pending.text });
+  }, [conversationId, initialMessages.length, sendMessage]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
