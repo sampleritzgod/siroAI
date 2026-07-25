@@ -2,9 +2,9 @@
 
 import { SidebarProvider } from "@/components/sidebar-context";
 import type { ConversationListItem } from "@/modules/conversation/actions/conversation-actions";
-import type { NotebookListItem } from "@/modules/notebook/actions/notebook-actions";
 import { NotebookAppShell } from "@/modules/notebook/components/notebook-sidebar";
-import type { SourceListItem } from "@/modules/source/actions/source-actions";
+import type { NotebookListItem } from "@/modules/notebook/service";
+import type { SourceListItem } from "@/modules/source/service";
 
 type AppShellClientProps = {
   notebooks: NotebookListItem[];

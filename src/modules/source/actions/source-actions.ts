@@ -12,8 +12,6 @@ import {
   type SourceRecord,
 } from "@/modules/source/service";
 
-export type { SourceListItem, SourceRecord };
-
 export async function listNotebookSources(
   notebookId: string
 ): Promise<SourceListItem[]> {

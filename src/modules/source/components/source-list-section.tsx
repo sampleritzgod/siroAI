@@ -6,12 +6,12 @@ import { cn } from "@/lib/utils";
 import {
   deleteSource,
   renameSource,
-  type SourceListItem,
 } from "@/modules/source/actions/source-actions";
 import { AddSourceDialog } from "@/modules/source/components/add-source-dialog";
 import { SourceMetadataDialog } from "@/modules/source/components/source-metadata-dialog";
-import { formatIndexingStatus } from "@/modules/source/status-label";
 import { SOURCE_TITLE_MAX_LENGTH } from "@/modules/source/constants";
+import type { SourceListItem } from "@/modules/source/service";
+import { formatIndexingStatus } from "@/modules/source/status-label";
 
 type SourceListSectionProps = {
   notebookId: string;

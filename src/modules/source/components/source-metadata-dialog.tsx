@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId } from "react";
-import type { SourceListItem } from "@/modules/source/actions/source-actions";
+import type { SourceListItem } from "@/modules/source/service";
 import { formatIndexingStatus } from "@/modules/source/status-label";
 
 type SourceMetadataDialogProps = {

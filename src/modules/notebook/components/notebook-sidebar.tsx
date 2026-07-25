@@ -17,7 +17,6 @@ import { startNewChat } from "@/modules/conversation/actions/conversation-action
 import type { ConversationListItem } from "@/modules/conversation/actions/conversation-actions";
 import { ConversationListSection } from "@/modules/conversation/components/conversation-list-section";
 import { updateNotebook } from "@/modules/notebook/actions/notebook-actions";
-import type { NotebookListItem } from "@/modules/notebook/actions/notebook-actions";
 import {
   clearActiveNotebookId,
   readActiveNotebookId,
@@ -28,8 +27,9 @@ import {
 import { CreateNotebookDialog } from "@/modules/notebook/components/create-notebook-dialog";
 import { DeleteNotebookDialog } from "@/modules/notebook/components/delete-notebook-dialog";
 import { NotebookEmptyState } from "@/modules/notebook/components/notebook-empty-state";
-import type { SourceListItem } from "@/modules/source/actions/source-actions";
+import type { NotebookListItem } from "@/modules/notebook/service";
 import { SourceListSection } from "@/modules/source/components/source-list-section";
+import type { SourceListItem } from "@/modules/source/service";
 
 type NotebookSidebarProps = {
   notebooks: NotebookListItem[];

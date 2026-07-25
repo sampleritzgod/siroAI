@@ -12,8 +12,6 @@ import {
   type NotebookRecord,
 } from "@/modules/notebook/service";
 
-export type { NotebookListItem, NotebookRecord };
-
 /**
  * Creates a notebook for the signed-in user.
  */
