@@ -4,9 +4,10 @@ import {
   unauthorized,
   validation,
 } from "@/lib/errors";
-import { createRequestId } from "@/lib/logger";
+import { createRequestId, logger } from "@/lib/logger";
 import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
+import { getS3ConfigStatus } from "@/modules/files/s3";
 import { toSourceAppError } from "@/modules/source/constants";
 import { beginSourceDirectUpload } from "@/modules/source/service";
 
@@ -78,8 +79,25 @@ export async function POST(req: Request) {
     });
 
     if (!result) {
+      const s3 = getS3ConfigStatus();
+      logger.warn("[UPLOAD] direct_upload_unavailable", {
+        requestId,
+        notebookId,
+        size,
+        s3Configured: s3.configured,
+        s3Present: s3.present,
+        s3Missing: s3.missing,
+      });
       return Response.json(
-        { error: "Direct upload unavailable", code: "DIRECT_UPLOAD_UNAVAILABLE" },
+        {
+          error: "Direct upload unavailable",
+          code: "DIRECT_UPLOAD_UNAVAILABLE",
+          reason: s3.configured
+            ? "presign_failed"
+            : "s3_env_incomplete",
+          missingEnv: s3.missing,
+          presentEnv: s3.present,
+        },
         { status: 501, headers: { "X-Request-Id": requestId } }
       );
     }

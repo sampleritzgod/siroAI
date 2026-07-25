@@ -223,14 +223,21 @@ function AddSourceDialogForm({
       const presignPayload = (await presignResponse.json().catch(() => null)) as {
         error?: string;
         code?: string;
+        reason?: string;
+        missingEnv?: string[];
       } | null;
 
       if (mustUseDirectUpload || presignResponse.status !== 501) {
+        const missing =
+          Array.isArray(presignPayload?.missingEnv) &&
+          presignPayload.missingEnv.length > 0
+            ? ` Missing on server: ${presignPayload.missingEnv.join(", ")}.`
+            : "";
         setError(
-          presignPayload?.error ||
+          (presignPayload?.error || "Direct upload unavailable") +
             (presignResponse.status === 501
-              ? "Cloud storage is not configured for large files. Set AWS S3 env vars on Vercel."
-              : `Upload failed (${presignResponse.status}). Your file is ${formatUploadMb(file.size)} — under the ${formatUploadMb(MAX_UPLOAD_BYTES)} app limit.`)
+              ? ` Cloud storage is not fully configured.${missing}`
+              : ` (HTTP ${presignResponse.status})`)
         );
         return;
       }

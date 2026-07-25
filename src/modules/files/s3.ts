@@ -26,12 +26,37 @@ export function setS3ClientForTests(client: SendableClient | null) {
 }
 
 export function isS3Configured(): boolean {
-  return Boolean(
-    process.env.AWS_REGION?.trim() &&
-      process.env.AWS_ACCESS_KEY_ID?.trim() &&
-      process.env.AWS_SECRET_ACCESS_KEY?.trim() &&
-      process.env.AWS_S3_BUCKET?.trim()
-  );
+  return getS3ConfigStatus().configured;
+}
+
+/**
+ * Which AWS env vars are present (booleans only — never log secret values).
+ * Used to explain DIRECT_UPLOAD_UNAVAILABLE without guessing.
+ */
+export function getS3ConfigStatus(): {
+  configured: boolean;
+  present: string[];
+  missing: string[];
+} {
+  const required = [
+    "AWS_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_S3_BUCKET",
+  ] as const;
+
+  const present: string[] = [];
+  const missing: string[] = [];
+  for (const key of required) {
+    if (process.env[key]?.trim()) present.push(key);
+    else missing.push(key);
+  }
+
+  return {
+    configured: missing.length === 0,
+    present,
+    missing,
+  };
 }
 
 export function getS3Bucket(): string {
