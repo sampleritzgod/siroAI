@@ -1,5 +1,5 @@
-/** Max upload size (bytes). Raised so typical textbooks / scanned PDFs can upload. */
-export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** Max upload size (bytes). Direct S3 upload bypasses Vercel’s 4.5MB API body limit. */
+export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1GB
 
 export const ALLOWED_MEDIA_TYPES = [
   "image/jpeg",
