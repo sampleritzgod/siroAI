@@ -86,7 +86,7 @@ export function ChatComposer({
       if (file.size > MAX_UPLOAD_BYTES) {
         setUploadNotice({
           tone: "error",
-          message: `“${file.name}” is too large (max 10MB).`,
+          message: `“${file.name}” is too large (max ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB).`,
         });
         continue;
       }
@@ -225,7 +225,7 @@ export function ChatComposer({
           <button
             type="button"
             disabled={disabled || busy || uploading}
-            title="Attach image, PDF, or text (max 10MB)"
+            title={`Attach image, PDF, or text (max ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB)`}
             onClick={() => fileInputRef.current?.click()}
             className="rounded-full border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
           >
