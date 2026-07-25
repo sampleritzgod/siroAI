@@ -201,8 +201,14 @@ function AddSourceDialogForm({
         });
 
         if (!putResponse.ok) {
+          const raw = await putResponse.text().catch(() => "");
+          const code =
+            raw.match(/<Code>([^<]+)<\/Code>/i)?.[1] ??
+            (putResponse.statusText || "unknown");
+          // CORS failures throw (caught below). A readable non-OK response is
+          // an S3 HTTP error (often SignatureDoesNotMatch / AccessDenied).
           setError(
-            "Could not upload file to storage. Check S3 CORS allows PUT from this site."
+            `Storage upload failed (HTTP ${putResponse.status}: ${code}).`
           );
           return;
         }

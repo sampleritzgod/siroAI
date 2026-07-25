@@ -83,6 +83,10 @@ function getS3Client(): SendableClient {
   const config: S3ClientConfig = {
     region,
     credentials: { accessKeyId, secretAccessKey },
+    // Browser PUT via presigned URL cannot satisfy SDK-default flexible
+    // checksums (x-amz-checksum-* hoisted into the query string).
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   };
 
   return new S3Client(config);
@@ -289,7 +293,17 @@ export async function s3GetPutSignedUrl(input: {
         Key: input.key,
         ContentType: input.contentType,
       }),
-      { expiresIn: input.expiresInSeconds ?? 900 }
+      {
+        expiresIn: input.expiresInSeconds ?? 900,
+        // Keep checksum headers out of the query string for browser PUTs.
+        unhoistableHeaders: new Set([
+          "x-amz-checksum-crc32",
+          "x-amz-checksum-crc32c",
+          "x-amz-checksum-sha1",
+          "x-amz-checksum-sha256",
+          "x-amz-sdk-checksum-algorithm",
+        ]),
+      }
     );
   } catch (error) {
     toStorageError(error, "Storage error: S3 upload URL failed");
