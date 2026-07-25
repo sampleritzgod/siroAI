@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "test": "tsx --test $(find src -name '*.test.ts')",
     "test:e2e": "playwright test",
+    "load:test": "node scripts/load-test.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

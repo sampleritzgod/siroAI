@@ -288,3 +288,46 @@ model DocumentChunk {
   @@index([notebookId])
   @@index([sourceId])
 }
+
+enum BackgroundJobType {
+  INDEX_SOURCE
+  INDEX_ATTACHMENT
+  PURGE_NOTEBOOK
+}
+
+enum BackgroundJobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEAD
+  CANCELLED
+}
+
+/**
+ * Durable background work (indexing, hard-purge).
+ * Survives deploy/restart; cron + best-effort after() drain the queue.
+ */
+model BackgroundJob {
+  id             String              @id @default(cuid())
+  type           BackgroundJobType
+  status         BackgroundJobStatus @default(PENDING)
+  /** Unique key so re-enqueue is idempotent (e.g. index:source:{id}). */
+  idempotencyKey String              @unique
+  payload        Json
+  attempts       Int                 @default(0)
+  maxAttempts    Int                 @default(5)
+  /** When the job becomes eligible to run (backoff / schedule). */
+  nextRunAt      DateTime            @default(now())
+  lockedAt       DateTime?
+  lockedBy       String?
+  lastError      String?             @db.Text
+  progress       Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  completedAt    DateTime?
+
+  @@index([status, nextRunAt])
+  @@index([type, status])
+  @@index([lockedAt])
+}

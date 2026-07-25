@@ -1,5 +1,6 @@
 import { loadChatMessages } from "@/modules/ai/chat-store";
 import { prisma } from "@/lib/db";
+import { RATE_LIMITS, rateLimit } from "@/lib/rate-limit";
 import { isShareTokenFormat } from "@/modules/conversation/utils/share-token";
 
 export type SharedConversationView = {
@@ -10,11 +11,21 @@ export type SharedConversationView = {
 
 /**
  * Public read helper — no auth. Returns null when token is invalid/revoked.
+ * Rate-limited by token to blunt scraping.
  */
 export async function loadSharedConversation(
   token: string
 ): Promise<SharedConversationView | null> {
   if (!isShareTokenFormat(token)) {
+    return null;
+  }
+
+  const limited = await rateLimit({
+    scope: "share",
+    userId: `token:${token.slice(0, 24)}`,
+    ...RATE_LIMITS.share,
+  });
+  if (!limited.success) {
     return null;
   }
 

@@ -40,6 +40,10 @@ import {
   type ParsedVtt,
   type VttSourceMetadata,
 } from "@/modules/source/parse-vtt";
+import {
+  cancelJobByIdempotencyKey,
+  indexSourceIdempotencyKey,
+} from "@/modules/jobs/queue";
 
 /**
  * Source.metadata is source-type specific. Fields are optional so one type can
@@ -1000,6 +1004,8 @@ export async function deleteSourceForUser(input: {
   sourceId: string;
 }): Promise<void> {
   const source = await assertSourceOwner(input.sourceId, input.userId);
+
+  await cancelJobByIdempotencyKey(indexSourceIdempotencyKey(source.id));
 
   await prisma.$executeRaw`
     DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}

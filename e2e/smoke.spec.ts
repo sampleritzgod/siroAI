@@ -7,9 +7,19 @@ test.describe("smoke", () => {
 
     const body = (await response.json()) as {
       ok?: boolean;
-      checks?: Record<string, unknown>;
+      status?: string;
     };
 
+    expect(body.ok).toBe(true);
+    expect(body.status).toBe("alive");
+  });
+
+  test("ready endpoint reports dependency checks", async ({ request }) => {
+    const response = await request.get("/api/ready");
+    const body = (await response.json()) as {
+      ok?: boolean;
+      checks?: Record<string, unknown>;
+    };
     expect(typeof body.ok).toBe("boolean");
     expect(body.checks).toBeTruthy();
   });

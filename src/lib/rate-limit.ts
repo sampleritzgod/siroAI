@@ -1,5 +1,7 @@
 import { cacheKeys } from "@/lib/cache/keys";
 import { getRedis } from "@/lib/cache/redis";
+import { rateLimited } from "@/lib/errors";
+import { isProductionRuntime } from "@/lib/runtime";
 
 export type RateLimitResult = {
   success: boolean;
@@ -49,10 +51,18 @@ function memoryLimit(
   };
 }
 
+function rejectAll(limit: number, windowSeconds: number): RateLimitResult {
+  return {
+    success: false,
+    limit,
+    remaining: 0,
+    reset: Date.now() + windowSeconds * 1000,
+  };
+}
+
 /**
- * Fixed-window rate limit (Redis INCR when configured, else in-process).
- * Note: the memory fallback is per-process only — on serverless each instance
- * has its own counter, so production should set Upstash Redis.
+ * Fixed-window rate limit.
+ * Production requires Redis (fail closed). Local/CI may use memory.
  */
 export async function rateLimit(input: {
   scope: string;
@@ -82,28 +92,43 @@ export async function rateLimit(input: {
         reset,
       };
     } catch (error) {
-      console.warn("[rate-limit] redis failed, using memory", error);
+      console.warn("[rate-limit] redis failed", error);
+      if (isProductionRuntime()) {
+        return rejectAll(input.limit, input.windowSeconds);
+      }
     }
-  } else if (
-    process.env.VERCEL === "1" &&
-    process.env.NODE_ENV === "production"
-  ) {
-    // Log once per process so operators notice missing Redis in prod.
-    if (!(globalThis as { __siroRateLimitWarned?: boolean }).__siroRateLimitWarned) {
-      (globalThis as { __siroRateLimitWarned?: boolean }).__siroRateLimitWarned =
-        true;
-      console.warn(
-        "[rate-limit] UPSTASH_REDIS not configured — using per-instance memory limits (ineffective under concurrency)"
-      );
-    }
+  } else if (isProductionRuntime()) {
+    console.error(
+      "[rate-limit] Redis required in production — rejecting request"
+    );
+    return rejectAll(input.limit, input.windowSeconds);
   }
 
   return memoryLimit(key, input.limit, input.windowSeconds);
 }
 
+/** Throw AppError when limited (for typed route handlers). */
+export async function assertRateLimit(input: {
+  scope: string;
+  userId: string;
+  limit: number;
+  windowSeconds: number;
+}): Promise<RateLimitResult> {
+  const result = await rateLimit(input);
+  if (!result.success) {
+    throw rateLimited();
+  }
+  return result;
+}
+
 export const RATE_LIMITS = {
   chat: { limit: 40, windowSeconds: 60 },
   consensus: { limit: 8, windowSeconds: 60 },
+  files: { limit: 30, windowSeconds: 60 },
+  sources: { limit: 30, windowSeconds: 60 },
+  website: { limit: 20, windowSeconds: 60 },
+  youtube: { limit: 15, windowSeconds: 60 },
+  share: { limit: 60, windowSeconds: 60 },
 } as const;
 
 export function rateLimitHeaders(result: RateLimitResult): HeadersInit {

@@ -1,28 +1,30 @@
-import { after } from "next/server";
 import { prisma } from "@/lib/db";
-import { captureException, logger } from "@/lib/logger";
+import {
+  AppError,
+  conflict,
+  databaseError,
+  notFound,
+  payloadTooLarge,
+  storageError,
+  toErrorResponse,
+  unauthorized,
+  unprocessable,
+  unsupportedMedia,
+  validation,
+} from "@/lib/errors";
+import { captureException, createRequestId, logger } from "@/lib/logger";
+import { incrMetric, observeMs } from "@/lib/metrics";
 import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
-import { formatSourceUploadError } from "@/modules/source/constants";
+import { enqueueSourceIndexing } from "@/modules/jobs/enqueue";
 import { isYoutubeUrl } from "@/modules/source/fetch-youtube";
 import {
   createSourceFromUpload,
   createSourceFromWebsite,
   createSourceFromYoutube,
-  finalizeSourceIndexing,
 } from "@/modules/source/service";
 
-// Background indexing (chunk + embed + vector insert) runs via after() inside
-// this function's lifetime. Default duration can kill it mid-index on Vercel.
 export const maxDuration = 60;
-
-function jsonError(
-  message: string,
-  status: number,
-  headers?: HeadersInit
-) {
-  return Response.json({ error: message }, { status, headers });
-}
 
 function sourceResponse(source: {
   id: string;
@@ -53,92 +55,80 @@ function sourceResponse(source: {
   });
 }
 
-function mapUploadError(message: string) {
-  if (message === "Unauthorized") {
-    return jsonError(message, 401);
-  }
-  if (message === "Notebook not found") {
-    return jsonError(message, 404);
-  }
-  if (/already added/i.test(message)) {
-    return jsonError(message, 409);
-  }
+/**
+ * Map legacy Error throws from source services into AppError.
+ */
+function mapSourceError(error: unknown): AppError {
+  if (error instanceof AppError) return error;
+
+  const message =
+    error instanceof Error ? error.message : "Upload failed. Please try again.";
+
+  if (/unauthorized/i.test(message)) return unauthorized();
+  if (/notebook not found/i.test(message)) return notFound("Notebook not found");
+  if (/already added/i.test(message)) return conflict(message);
   if (/invalid youtube url|unsupported youtube url|invalid url/i.test(message)) {
-    return jsonError(message, 400);
+    return validation(message);
   }
   if (/unsupported file type|unsupported content type/i.test(message)) {
-    return jsonError(message, 415);
+    return unsupportedMedia(message);
   }
   if (/invalid vtt|corrupted vtt|empty vtt/i.test(message)) {
-    return jsonError(message, 422);
+    return unprocessable(message);
   }
   if (/too large|file is empty|website content is too large/i.test(message)) {
-    return jsonError(message, 413);
+    return payloadTooLarge(message);
   }
   if (
     /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced|empty website|website unreachable|website fetch timed out|timed out|no transcript|youtube video|private or restricted|youtube transcript|blocked transcript|SUPADATA_API_KEY/i.test(
       message
     )
   ) {
-    return jsonError(message, 422);
+    return unprocessable(message);
   }
-  if (message === "Storage error") {
-    return jsonError(message, 502);
-  }
-  if (message === "Database error") {
-    return jsonError(message, 500);
-  }
+  if (/storage error/i.test(message)) return storageError();
+  if (/database error|prisma|P\d{4}/i.test(message)) return databaseError();
 
-  // Unknown / unexpected — never leak raw exception text.
-  return jsonError("Upload failed. Please try again.", 500);
-}
-
-async function queueIndexing(source: { id: string; notebookId: string }) {
-  after(async () => {
-    try {
-      await finalizeSourceIndexing({
-        sourceId: source.id,
-        notebookId: source.notebookId,
-      });
-    } catch (error) {
-      await captureException(error, {
-        stage: "source_index",
-        sourceId: source.id,
-        notebookId: source.notebookId,
-      });
-    }
-  });
+  return unprocessable(
+    /upload failed/i.test(message) ? message : "Upload failed. Please try again."
+  );
 }
 
 /**
  * POST /api/sources
- * - multipart/form-data: file + notebookId (PDF / text)
- * - application/json: { notebookId, url } (website or YouTube)
- * Fast path returns PROCESSING; after() runs chunk/embed → INDEXED.
+ * - multipart: file + notebookId
+ * - JSON: { notebookId, url }
  */
 export async function POST(req: Request) {
+  const requestId = createRequestId();
+  const started = Date.now();
+
   try {
     let user;
     try {
       user = await requireUser();
     } catch {
-      return jsonError("Unauthorized", 401);
+      return toErrorResponse(unauthorized(), { "X-Request-Id": requestId });
     }
 
     const limited = await rateLimit({
-      scope: "files",
+      scope: "sources",
       userId: user.id,
-      limit: 30,
-      windowSeconds: RATE_LIMITS.chat.windowSeconds,
+      ...RATE_LIMITS.sources,
     });
 
     if (!limited.success) {
-      return jsonError("Too many uploads. Try again shortly.", 429, {
-        ...rateLimitHeaders(limited),
-        "Retry-After": String(
-          Math.max(1, Math.ceil((limited.reset - Date.now()) / 1000))
-        ),
-      });
+      incrMetric("rate_limited.sources");
+      return toErrorResponse(
+        new AppError("RATE_LIMITED", "Too many uploads. Try again shortly."),
+        {
+          ...rateLimitHeaders(limited),
+          "Retry-After": String(
+            Math.max(1, Math.ceil((limited.reset - Date.now()) / 1000))
+          ),
+          "X-Request-Id": requestId,
+        }
+      );
     }
 
     const contentType = req.headers.get("content-type") ?? "";
@@ -153,19 +143,26 @@ export async function POST(req: Request) {
       try {
         body = await req.json();
       } catch {
-        return jsonError("Invalid JSON body", 400);
+        return toErrorResponse(validation("Invalid JSON body"), {
+          "X-Request-Id": requestId,
+        });
       }
       notebookId = String(body.notebookId ?? "").trim();
       remoteUrl = String(body.url ?? "").trim() || null;
       if (!remoteUrl) {
-        return jsonError("url is required", 400);
+        return toErrorResponse(validation("url is required"), {
+          "X-Request-Id": requestId,
+        });
       }
     } else {
       let form: FormData;
       try {
         form = await req.formData();
       } catch {
-        return jsonError("Expected multipart form data or JSON body", 400);
+        return toErrorResponse(
+          validation("Expected multipart form data or JSON body"),
+          { "X-Request-Id": requestId }
+        );
       }
 
       notebookId = String(form.get("notebookId") ?? "").trim();
@@ -177,12 +174,16 @@ export async function POST(req: Request) {
       } else if (formFile instanceof File) {
         file = formFile;
       } else {
-        return jsonError("file or url is required", 400);
+        return toErrorResponse(validation("file or url is required"), {
+          "X-Request-Id": requestId,
+        });
       }
     }
 
     if (!notebookId) {
-      return jsonError("Notebook not found", 400);
+      return toErrorResponse(validation("notebookId is required"), {
+        "X-Request-Id": requestId,
+      });
     }
 
     const notebook = await prisma.notebook.findFirst({
@@ -191,64 +192,92 @@ export async function POST(req: Request) {
     });
 
     if (!notebook) {
-      return jsonError("Notebook not found", 404);
+      return toErrorResponse(notFound("Notebook not found"), {
+        "X-Request-Id": requestId,
+      });
     }
 
     if (remoteUrl) {
       if (isYoutubeUrl(remoteUrl)) {
-        logger.info("[UPLOAD] api_received_youtube", {
+        const ytLimit = await rateLimit({
+          scope: "youtube",
           userId: user.id,
-          notebookId,
-          url: remoteUrl,
+          ...RATE_LIMITS.youtube,
         });
+        if (!ytLimit.success) {
+          return toErrorResponse(
+            new AppError("RATE_LIMITED", "Too many YouTube imports. Try again shortly."),
+            { ...rateLimitHeaders(ytLimit), "X-Request-Id": requestId }
+          );
+        }
 
         const source = await createSourceFromYoutube({
           userId: user.id,
           notebookId,
           url: remoteUrl,
         });
-        await queueIndexing(source);
+        await enqueueSourceIndexing({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+        });
+        incrMetric("sources.youtube");
+        observeMs("sources.upload_ms", Date.now() - started);
         return sourceResponse(source);
       }
 
-      logger.info("[UPLOAD] api_received_website", {
+      const webLimit = await rateLimit({
+        scope: "website",
         userId: user.id,
-        notebookId,
-        url: remoteUrl,
+        ...RATE_LIMITS.website,
       });
+      if (!webLimit.success) {
+        return toErrorResponse(
+          new AppError("RATE_LIMITED", "Too many website imports. Try again shortly."),
+          { ...rateLimitHeaders(webLimit), "X-Request-Id": requestId }
+        );
+      }
 
       const source = await createSourceFromWebsite({
         userId: user.id,
         notebookId,
         url: remoteUrl,
       });
-      await queueIndexing(source);
+      await enqueueSourceIndexing({
+        sourceId: source.id,
+        notebookId: source.notebookId,
+      });
+      incrMetric("sources.website");
+      observeMs("sources.upload_ms", Date.now() - started);
       return sourceResponse(source);
     }
 
     if (!file) {
-      return jsonError("file is required", 400);
+      return toErrorResponse(validation("file is required"), {
+        "X-Request-Id": requestId,
+      });
     }
-
-    logger.info("[UPLOAD] api_received", {
-      userId: user.id,
-      notebookId,
-      filename: file.name,
-      type: file.type,
-      size: file.size,
-    });
 
     const source = await createSourceFromUpload({
       userId: user.id,
       notebookId,
       file,
     });
-    await queueIndexing(source);
+    await enqueueSourceIndexing({
+      sourceId: source.id,
+      notebookId: source.notebookId,
+    });
+    incrMetric("sources.upload");
+    observeMs("sources.upload_ms", Date.now() - started);
     return sourceResponse(source);
   } catch (error) {
-    await captureException(error, { stage: "source_upload" });
-    const message = formatSourceUploadError(error);
-    logger.error("[UPLOAD] api_error", { error: message });
-    return mapUploadError(message);
+    await captureException(error, { stage: "source_upload", requestId });
+    const mapped = mapSourceError(error);
+    logger.error("[UPLOAD] api_error", {
+      requestId,
+      code: mapped.code,
+      error: mapped.message,
+    });
+    incrMetric("sources.error");
+    return toErrorResponse(mapped, { "X-Request-Id": requestId });
   }
 }

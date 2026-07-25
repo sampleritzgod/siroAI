@@ -492,25 +492,40 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     await captureException(error, { requestId, route: "api/chat" });
+    const { toErrorResponse, isAppError, AppError, ErrorCodes } = await import(
+      "@/lib/errors"
+    );
+    if (isAppError(error)) {
+      return toErrorResponse(error, { "X-Request-Id": requestId });
+    }
     const message =
       error instanceof Error ? error.message : "Internal server error";
-
     if (/unauthorized/i.test(message)) {
-      return jsonError("Unauthorized", 401);
-    }
-
-    if (/not found/i.test(message)) {
-      return jsonError("Not found", 404);
-    }
-
-    if (/rate|quota|429/i.test(message)) {
-      return jsonError(
-        "The model provider is rate-limiting requests. Try again in a moment.",
-        429
+      return toErrorResponse(
+        new AppError(ErrorCodes.UNAUTHORIZED, "Unauthorized"),
+        { "X-Request-Id": requestId }
       );
     }
-
-    // Do not leak provider/DB/stack internals to the client.
-    return jsonError("Something went wrong. Please try again.", 500);
+    if (/not found/i.test(message)) {
+      return toErrorResponse(new AppError(ErrorCodes.NOT_FOUND, "Not found"), {
+        "X-Request-Id": requestId,
+      });
+    }
+    if (/rate|quota|429/i.test(message)) {
+      return toErrorResponse(
+        new AppError(
+          ErrorCodes.RATE_LIMITED,
+          "The model provider is rate-limiting requests. Try again in a moment."
+        ),
+        { "X-Request-Id": requestId }
+      );
+    }
+    return toErrorResponse(
+      new AppError(
+        ErrorCodes.INTERNAL,
+        "Something went wrong. Please try again."
+      ),
+      { "X-Request-Id": requestId }
+    );
   }
 }

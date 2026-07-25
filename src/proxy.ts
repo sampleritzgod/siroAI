@@ -1,17 +1,11 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-const isPublicRoute = createRouteMatcher([
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/api/health",
-  "/s/(.*)",
-]);
-
-export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) {
-    await auth.protect();
-  }
-});
+/**
+ * Session sync only — auth is enforced at each page/layout/API/action via
+ * auth.protect() / requireUser() (Clerk resource-based auth).
+ * Do not gate by path matchers here (createRouteMatcher is deprecated).
+ */
+export default clerkMiddleware();
 
 export const config = {
   matcher: [
