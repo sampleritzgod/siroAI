@@ -85,6 +85,16 @@ export type SourceListItem = {
   updatedAt: Date;
 };
 
+import {
+  notFound,
+  conflict,
+  databaseError,
+  payloadTooLarge,
+  unprocessable,
+  unsupportedMedia,
+  validation,
+} from "@/lib/errors";
+
 async function assertNotebookOwner(notebookId: string, userId: string) {
   const notebook = await prisma.notebook.findFirst({
     where: { id: notebookId, userId, deletedAt: null },
@@ -92,7 +102,7 @@ async function assertNotebookOwner(notebookId: string, userId: string) {
   });
 
   if (!notebook) {
-    throw new Error("Notebook not found");
+    throw notFound("Notebook not found");
   }
 
   return notebook;
@@ -107,7 +117,7 @@ async function assertSourceOwner(sourceId: string, userId: string) {
   });
 
   if (!source) {
-    throw new Error("Source not found");
+    throw notFound("Source not found");
   }
 
   return source;
@@ -256,6 +266,12 @@ export async function listSourcesForNotebook(input: {
   await assertNotebookOwner(input.notebookId, input.userId);
   await failStaleProcessingSources({ notebookId: input.notebookId });
 
+  // Hobby plan: cron is daily — polling UI also drains stranded index jobs.
+  const { scheduleOpportunisticJobDrain } = await import(
+    "@/modules/jobs/enqueue"
+  );
+  scheduleOpportunisticJobDrain();
+
   const rows = await prisma.$queryRaw<
     Array<{
       id: string;
@@ -378,7 +394,7 @@ async function assertNoDuplicateVtt(input: {
   });
 
   if (duplicate) {
-    throw new Error("This subtitle file is already added to the notebook.");
+    throw conflict("This subtitle file is already added to the notebook.");
   }
 }
 
@@ -414,14 +430,14 @@ export async function createSourceFromUpload(input: {
       filename: originalFileName,
       declaredType: input.file.type,
     });
-    throw new Error(
+    throw unsupportedMedia(
       "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
     );
   }
 
   if (input.file.size <= 0) {
     uploadStage.error(new Error("File is empty"));
-    throw new Error("File is empty.");
+    throw payloadTooLarge("File is empty.");
   }
 
   if (input.file.size > MAX_UPLOAD_BYTES) {
@@ -429,7 +445,7 @@ export async function createSourceFromUpload(input: {
       size: input.file.size,
       max: MAX_UPLOAD_BYTES,
     });
-    throw new Error(
+    throw payloadTooLarge(
       `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
     );
   }
@@ -503,7 +519,7 @@ export async function createSourceFromUpload(input: {
     });
   } catch (error) {
     sourceStage.error(error);
-    throw new Error("Database error");
+    throw databaseError();
   }
 
   let storedKey: string | null = null;
@@ -550,9 +566,9 @@ export async function createSourceFromUpload(input: {
       } catch (error) {
         extractStage.error(error, { sourceId: pending.id });
         if (mediaType === "application/pdf") {
-          throw new Error("PDF extraction failed");
+          throw unprocessable("PDF extraction failed");
         }
-        throw new Error("Text extraction failed");
+        throw unprocessable("Text extraction failed");
       }
     }
 
@@ -752,9 +768,9 @@ export async function createSourceFromWebsite(input: {
       error instanceof Error &&
       /unique|duplicate/i.test(error.message)
     ) {
-      throw new Error("This website is already added to the notebook.");
+      throw conflict("This website is already added to the notebook.");
     }
-    throw new Error("Database error");
+    throw databaseError();
   }
 }
 
@@ -843,9 +859,9 @@ export async function createSourceFromYoutube(input: {
   } catch (error) {
     uploadStage.error(error);
     if (error instanceof Error && /unique|duplicate/i.test(error.message)) {
-      throw new Error("This YouTube video is already added to the notebook.");
+      throw conflict("This YouTube video is already added to the notebook.");
     }
-    throw new Error("Database error");
+    throw databaseError();
   }
 }
 
@@ -865,7 +881,7 @@ export async function finalizeSourceIndexing(input: {
   });
 
   if (!source) {
-    throw new Error("Source not found");
+    throw notFound("Source not found");
   }
 
   if (source.indexingStatus === "INDEXED") {
@@ -877,7 +893,7 @@ export async function finalizeSourceIndexing(input: {
       where: { id: source.id },
       data: { indexingStatus: "FAILED" },
     });
-    throw new Error("No extractable text found for embeddings");
+    throw unprocessable("No extractable text found for embeddings");
   }
 
   try {
@@ -893,7 +909,7 @@ export async function finalizeSourceIndexing(input: {
     });
 
     if (indexed.skipped || indexed.chunkCount === 0) {
-      throw new Error(
+      throw unprocessable(
         indexed.reason === "no_indexable_text"
           ? "No extractable text found for embeddings"
           : "Chunking produced zero chunks"
@@ -982,10 +998,10 @@ export async function renameSourceForUser(input: {
 
   const title = input.title.trim();
   if (!title) {
-    throw new Error("Title is required");
+    throw validation("Title is required");
   }
   if (title.length > SOURCE_TITLE_MAX_LENGTH) {
-    throw new Error(
+    throw validation(
       `Title must be at most ${SOURCE_TITLE_MAX_LENGTH} characters`
     );
   }

@@ -1,15 +1,9 @@
 import { prisma } from "@/lib/db";
 import {
   AppError,
-  conflict,
-  databaseError,
   notFound,
-  payloadTooLarge,
-  storageError,
   toErrorResponse,
   unauthorized,
-  unprocessable,
-  unsupportedMedia,
   validation,
 } from "@/lib/errors";
 import { captureException, createRequestId, logger } from "@/lib/logger";
@@ -17,6 +11,7 @@ import { incrMetric, observeMs } from "@/lib/metrics";
 import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import { enqueueSourceIndexing } from "@/modules/jobs/enqueue";
+import { toSourceAppError } from "@/modules/source/constants";
 import { isYoutubeUrl } from "@/modules/source/fetch-youtube";
 import {
   createSourceFromUpload,
@@ -53,45 +48,6 @@ function sourceResponse(source: {
     hasExtractedText: Boolean(source.extractedText),
     indexing: "queued",
   });
-}
-
-/**
- * Map legacy Error throws from source services into AppError.
- */
-function mapSourceError(error: unknown): AppError {
-  if (error instanceof AppError) return error;
-
-  const message =
-    error instanceof Error ? error.message : "Upload failed. Please try again.";
-
-  if (/unauthorized/i.test(message)) return unauthorized();
-  if (/notebook not found/i.test(message)) return notFound("Notebook not found");
-  if (/already added/i.test(message)) return conflict(message);
-  if (/invalid youtube url|unsupported youtube url|invalid url/i.test(message)) {
-    return validation(message);
-  }
-  if (/unsupported file type|unsupported content type/i.test(message)) {
-    return unsupportedMedia(message);
-  }
-  if (/invalid vtt|corrupted vtt|empty vtt/i.test(message)) {
-    return unprocessable(message);
-  }
-  if (/too large|file is empty|website content is too large/i.test(message)) {
-    return payloadTooLarge(message);
-  }
-  if (
-    /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced|empty website|website unreachable|website fetch timed out|timed out|no transcript|youtube video|private or restricted|youtube transcript|blocked transcript|SUPADATA_API_KEY/i.test(
-      message
-    )
-  ) {
-    return unprocessable(message);
-  }
-  if (/storage error/i.test(message)) return storageError();
-  if (/database error|prisma|P\d{4}/i.test(message)) return databaseError();
-
-  return unprocessable(
-    /upload failed/i.test(message) ? message : "Upload failed. Please try again."
-  );
 }
 
 /**
@@ -271,7 +227,7 @@ export async function POST(req: Request) {
     return sourceResponse(source);
   } catch (error) {
     await captureException(error, { stage: "source_upload", requestId });
-    const mapped = mapSourceError(error);
+    const mapped = toSourceAppError(error);
     logger.error("[UPLOAD] api_error", {
       requestId,
       code: mapped.code,

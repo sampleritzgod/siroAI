@@ -9,6 +9,7 @@ type RouteContext = {
 
 /**
  * GET /api/files/[id]/page/[page] — serve a rendered PDF page image.
+ * Denies access when the parent notebook is soft-deleted.
  */
 export async function GET(_req: Request, context: RouteContext) {
   try {
@@ -17,23 +18,38 @@ export async function GET(_req: Request, context: RouteContext) {
     const page = Number(pageRaw);
 
     if (!Number.isInteger(page) || page < 1 || page > 50) {
-      return Response.json({ error: "Invalid page" }, { status: 400 });
+      return Response.json(
+        { error: "Invalid page", code: "VALIDATION" },
+        { status: 400 }
+      );
     }
 
     const attachment = await prisma.attachment.findFirst({
-      where: { id, userId: user.id, status: "READY" },
+      where: {
+        id,
+        userId: user.id,
+        status: "READY",
+        conversation: {
+          notebook: { userId: user.id, deletedAt: null },
+        },
+      },
     });
 
     if (!attachment) {
-      return Response.json({ error: "File not found" }, { status: 404 });
+      return Response.json(
+        { error: "File not found", code: "NOT_FOUND" },
+        { status: 404 }
+      );
     }
 
     const vision = attachment.extractedText?.startsWith("SIRO_PDF_VISION:");
     if (!vision) {
-      return Response.json({ error: "Page preview not available" }, { status: 404 });
+      return Response.json(
+        { error: "Page preview not available", code: "NOT_FOUND" },
+        { status: 404 }
+      );
     }
 
-    // Blob-backed page URLs are absolute; local uses this route.
     if (attachment.storage === "VERCEL_BLOB") {
       try {
         const jsonLine = attachment.extractedText!.slice(
@@ -45,7 +61,10 @@ export async function GET(_req: Request, context: RouteContext) {
       } catch {
         // fall through
       }
-      return Response.json({ error: "Page not found" }, { status: 404 });
+      return Response.json(
+        { error: "Page not found", code: "NOT_FOUND" },
+        { status: 404 }
+      );
     }
 
     const bytes = await readFile(getLocalPagePath(id, page));
@@ -59,6 +78,9 @@ export async function GET(_req: Request, context: RouteContext) {
     });
   } catch (error) {
     console.error("[api/files page GET]", error);
-    return Response.json({ error: "Page not found" }, { status: 404 });
+    return Response.json(
+      { error: "Page not found", code: "NOT_FOUND" },
+      { status: 404 }
+    );
   }
 }

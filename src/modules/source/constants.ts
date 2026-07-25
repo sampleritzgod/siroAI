@@ -1,3 +1,17 @@
+import {
+  AppError,
+  ErrorCodes,
+  conflict,
+  databaseError,
+  isAppError,
+  notFound,
+  payloadTooLarge,
+  storageError,
+  unauthorized,
+  unprocessable,
+  unsupportedMedia,
+  validation,
+} from "@/lib/errors";
 import { MAX_UPLOAD_BYTES } from "@/modules/files/constants";
 
 export { MAX_UPLOAD_BYTES };
@@ -86,122 +100,158 @@ export function resolveSourceMediaType(input: {
   return null;
 }
 
-export function formatSourceUploadError(error: unknown): string {
-  const message =
-    error instanceof Error ? error.message : "Unexpected upload error";
+/** Convert any thrown value into an AppError for API responses. */
+export function toSourceAppError(error: unknown): AppError {
+  if (isAppError(error)) return error;
 
-  if (/unauthorized|signed in|auth/i.test(message)) {
-    return "Unauthorized";
-  }
-  if (/notebook not found/i.test(message)) {
-    return "Notebook not found";
-  }
-  if (/already added|duplicate website|duplicate youtube|already added to the notebook/i.test(message)) {
+  const message =
+    error instanceof Error ? error.message : "Upload failed. Please try again.";
+
+  if (/unauthorized|signed in|auth/i.test(message)) return unauthorized();
+  if (/notebook not found/i.test(message)) return notFound("Notebook not found");
+  if (/source not found/i.test(message)) return notFound("Source not found");
+  if (
+    /already added|duplicate website|duplicate youtube|already added to the notebook/i.test(
+      message
+    )
+  ) {
     if (/youtube/i.test(message)) {
-      return "This YouTube video is already added to the notebook.";
+      return conflict("This YouTube video is already added to the notebook.");
     }
-    if (/website/i.test(message)) {
-      return "This website is already added to the notebook.";
-    }
-    return message;
+    return conflict(message);
   }
   if (/invalid vtt|corrupted vtt|empty vtt/i.test(message)) {
-    return message;
+    return unprocessable(message);
   }
   if (/invalid youtube url|unsupported youtube url/i.test(message)) {
-    return message.includes("Unsupported")
-      ? "Unsupported YouTube URL"
-      : "Invalid YouTube URL";
+    return validation(
+      message.includes("Unsupported")
+        ? "Unsupported YouTube URL"
+        : "Invalid YouTube URL"
+    );
   }
   if (/private or restricted youtube/i.test(message)) {
-    return "Private or restricted YouTube video";
+    return unprocessable("Private or restricted YouTube video");
   }
   if (/youtube video not found|deleted/i.test(message)) {
-    return "YouTube video not found or deleted";
+    return unprocessable("YouTube video not found or deleted");
   }
   if (/no transcript available/i.test(message)) {
-    return "No transcript available for this video";
+    return unprocessable("No transcript available for this video");
   }
   if (/youtube transcript fetch timed out/i.test(message)) {
-    return "YouTube transcript fetch timed out";
+    return unprocessable("YouTube transcript fetch timed out");
   }
   if (/invalid SUPADATA_API_KEY/i.test(message)) {
-    return "Invalid SUPADATA_API_KEY";
+    return unprocessable("Invalid SUPADATA_API_KEY");
   }
   if (
     /blocked transcript access|too many requests|rate limited|SUPADATA_API_KEY/i.test(
       message
     )
   ) {
-    return message.includes("SUPADATA_API_KEY")
-      ? CLOUD_YOUTUBE_BLOCKED_MESSAGE
-      : "YouTube temporarily blocked transcript access from this server. Try again shortly.";
+    return unprocessable(
+      message.includes("SUPADATA_API_KEY")
+        ? CLOUD_YOUTUBE_BLOCKED_MESSAGE
+        : "YouTube temporarily blocked transcript access from this server. Try again shortly."
+    );
   }
   if (/youtube transcript fetch failed/i.test(message)) {
-    return message.startsWith("YouTube transcript fetch failed")
-      ? message
-      : "YouTube transcript fetch failed";
+    return unprocessable(
+      message.startsWith("YouTube transcript fetch failed")
+        ? message
+        : "YouTube transcript fetch failed"
+    );
   }
   if (/invalid url/i.test(message)) {
-    return message.includes("http")
-      ? message
-      : "Invalid URL. Only http and https are supported.";
+    return validation(
+      message.includes("http")
+        ? message
+        : "Invalid URL. Only http and https are supported."
+    );
   }
   if (/website fetch timed out|timed out/i.test(message)) {
-    return /youtube/i.test(message)
-      ? "YouTube transcript fetch timed out"
-      : "Website fetch timed out";
+    return unprocessable(
+      /youtube/i.test(message)
+        ? "YouTube transcript fetch timed out"
+        : "Website fetch timed out"
+    );
   }
   if (/website unreachable|host is not allowed/i.test(message)) {
-    return /HTTP \d+/.test(message) ? message : "Website unreachable";
+    return unprocessable(
+      /HTTP \d+/.test(message) ? message : "Website unreachable"
+    );
   }
   if (/empty website content/i.test(message)) {
-    return "Empty website content";
+    return unprocessable("Empty website content");
   }
   if (/unsupported content type/i.test(message)) {
-    return message;
+    return unsupportedMedia(message);
   }
   if (/website content is too large/i.test(message)) {
-    return "Website content is too large";
+    return payloadTooLarge("Website content is too large");
   }
   if (/unsupported file type/i.test(message)) {
-    return "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed.";
+    return unsupportedMedia(
+      "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
+    );
   }
-  if (/too large|between 1 byte|file must be/i.test(message)) {
-    return message.includes("MB")
-      ? message
-      : `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`;
+  if (/too large|between 1 byte|file must be|file is empty/i.test(message)) {
+    return payloadTooLarge(
+      message.includes("MB") || /empty/i.test(message)
+        ? message
+        : `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+    );
   }
   if (
-    /pdf parsing|no extractable text|no embeddable text|image-only pdf|corrupt/i.test(
+    /pdf parsing|no extractable text|no embeddable text|image-only pdf|corrupt|text extraction failed|pdf extraction failed/i.test(
       message
     )
   ) {
     if (/no extractable text|no embeddable text|image-only/i.test(message)) {
-      return "PDF extraction failed: no embeddable text (image-only PDF).";
+      return unprocessable(
+        "PDF extraction failed: no embeddable text (image-only PDF)."
+      );
     }
-    return "PDF parsing failed";
+    return unprocessable(
+      /text extraction/i.test(message)
+        ? "Text extraction failed"
+        : "PDF parsing failed"
+    );
   }
-  if (/embedding failed|embeddings missing|chunking produced/i.test(message)) {
-    return message;
+  if (
+    /embedding failed|embeddings missing|chunking produced|no extractable text found for embeddings/i.test(
+      message
+    )
+  ) {
+    return unprocessable(message);
   }
-  if (/storage error:/i.test(message)) {
+  if (/storage error/i.test(message)) {
     if (/not configured|BLOB_STORE_ID|BLOB_READ_WRITE_TOKEN/i.test(message)) {
-      return "Storage error: Blob is not configured on this deployment.";
+      return storageError(
+        "Storage error: Blob is not configured on this deployment."
+      );
     }
-    return "Storage error";
+    return storageError();
   }
   if (
     /BLOB_STORE_ID|BLOB_READ_WRITE_TOKEN|blob store|blob write|ENOENT|EACCES/i.test(
       message
     )
   ) {
-    return "Storage error";
+    return storageError();
   }
   if (/prisma|database|P\d{4}/i.test(message)) {
-    return "Database error";
+    return databaseError();
   }
 
-  // Never leak raw exception text (stack fragments, provider internals).
-  return "Upload failed. Please try again.";
+  return new AppError(
+    ErrorCodes.UNPROCESSABLE,
+    "Upload failed. Please try again."
+  );
+}
+
+/** Log-safe message derived from typed source errors. */
+export function formatSourceUploadError(error: unknown): string {
+  return toSourceAppError(error).message;
 }

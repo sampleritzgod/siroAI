@@ -30,7 +30,11 @@ export async function loadSharedConversation(
   }
 
   const conversation = await prisma.conversation.findFirst({
-    where: { shareToken: token },
+    where: {
+      shareToken: token,
+      // Soft-deleted notebooks revoke public share access.
+      notebook: { deletedAt: null },
+    },
     select: {
       id: true,
       title: true,

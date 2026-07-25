@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import { readBlobUpload, readLocalUpload } from "@/modules/files/storage";
+import { toErrorResponse, unauthorized } from "@/lib/errors";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -8,7 +9,7 @@ type RouteContext = {
 
 /**
  * GET /api/files/[id] — stream a stored attachment (auth + ownership).
- * Private Vercel Blob objects are proxied through this route (never redirected).
+ * Denies access when the parent notebook is soft-deleted.
  */
 export async function GET(_req: Request, context: RouteContext) {
   try {
@@ -16,11 +17,21 @@ export async function GET(_req: Request, context: RouteContext) {
     const { id } = await context.params;
 
     const attachment = await prisma.attachment.findFirst({
-      where: { id, userId: user.id, status: "READY" },
+      where: {
+        id,
+        userId: user.id,
+        status: "READY",
+        conversation: {
+          notebook: { userId: user.id, deletedAt: null },
+        },
+      },
     });
 
     if (!attachment) {
-      return Response.json({ error: "File not found" }, { status: 404 });
+      return Response.json(
+        { error: "File not found", code: "NOT_FOUND" },
+        { status: 404 }
+      );
     }
 
     if (attachment.storage === "VERCEL_BLOB") {
@@ -35,7 +46,10 @@ export async function GET(_req: Request, context: RouteContext) {
           },
         });
       } catch {
-        return Response.json({ error: "File not found" }, { status: 404 });
+        return Response.json(
+          { error: "File not found", code: "NOT_FOUND" },
+          { status: 404 }
+        );
       }
     }
 
@@ -54,11 +68,9 @@ export async function GET(_req: Request, context: RouteContext) {
     console.error("[api/files GET]", error);
     const message =
       error instanceof Error ? error.message : "Internal server error";
-
     if (/unauthorized/i.test(message)) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+      return toErrorResponse(unauthorized());
     }
-
-    return Response.json({ error: "Internal server error" }, { status: 500 });
+    return toErrorResponse(error);
   }
 }

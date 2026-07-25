@@ -46,7 +46,9 @@ Chat with streaming replies, stop generation, regenerate an answer, or edit a me
 
 ## Deploy tip
 
-On Vercel, add the same env vars, point `DATABASE_URL` at your production Postgres, and run `pnpm db:deploy` once. For uploads in production, set `BLOB_READ_WRITE_TOKEN`. Redis is optional — the app still runs without it.
+On Vercel Hobby, Cron is capped at **once per day**. This project schedules `/api/cron/jobs` daily (`0 4 * * *`) and relies on Next.js `after()` + UI polling to drain the indexing queue in near-real-time. For minute-level durability without upgrading to Pro, point an external scheduler at `GET /api/cron/jobs` with `Authorization: Bearer $CRON_SECRET`.
+
+On Vercel, add the same env vars, point `DATABASE_URL` at your production Postgres, and run `pnpm db:deploy` once. For uploads in production, set `BLOB_READ_WRITE_TOKEN`. Redis is required in production for rate limits.
 
 **YouTube sources on Vercel:** YouTube blocks caption downloads from cloud IPs. Set `SUPADATA_API_KEY` (free at [supadata.ai](https://supadata.ai)) in Vercel env so Add YouTube works in production. Locally it works without that key.
 
