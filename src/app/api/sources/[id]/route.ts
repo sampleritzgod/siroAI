@@ -1,10 +1,14 @@
 import { requireUser } from "@/modules/auth/actions/require-user";
+import { toErrorResponse, unauthorized } from "@/lib/errors";
 import {
   readStoredUpload,
   resolveStorageFromPath,
 } from "@/modules/files/storage";
-import { isSentinelStoragePath } from "@/modules/source/constants";
-import { getSourceForUser } from "@/modules/source/service";
+import { isSentinelStoragePath, toSourceAppError } from "@/modules/source/constants";
+import {
+  deleteSourceForUser,
+  getSourceForUser,
+} from "@/modules/source/service";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -60,5 +64,25 @@ export async function GET(_req: Request, context: RouteContext) {
     }
 
     return Response.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE /api/sources/[id] — remove a source (also used to abort failed direct uploads).
+ */
+export async function DELETE(_req: Request, context: RouteContext) {
+  try {
+    let user;
+    try {
+      user = await requireUser();
+    } catch {
+      return toErrorResponse(unauthorized());
+    }
+
+    const { id } = await context.params;
+    await deleteSourceForUser({ userId: user.id, sourceId: id });
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return toErrorResponse(toSourceAppError(error));
   }
 }

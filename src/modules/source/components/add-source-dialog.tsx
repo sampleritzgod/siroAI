@@ -192,38 +192,55 @@ function AddSourceDialogForm({
           return;
         }
 
-        const putResponse = await fetch(presign.uploadUrl, {
-          method: "PUT",
-          body: file,
-          headers: {
-            "Content-Type": presign.mediaType || mediaType,
-          },
-        });
+        const abortOrphanSource = async () => {
+          // Presign already created a PROCESSING row — abort so it cannot stick.
+          await fetch(`/api/sources/${presign.sourceId}`, {
+            method: "DELETE",
+          }).catch(() => {});
+        };
 
-        if (!putResponse.ok) {
-          const raw = await putResponse.text().catch(() => "");
-          const code =
-            raw.match(/<Code>([^<]+)<\/Code>/i)?.[1] ??
-            (putResponse.statusText || "unknown");
-          // CORS failures throw (caught below). A readable non-OK response is
-          // an S3 HTTP error (often SignatureDoesNotMatch / AccessDenied).
-          setError(
-            `Storage upload failed (HTTP ${putResponse.status}: ${code}).`
-          );
+        try {
+          const putResponse = await fetch(presign.uploadUrl, {
+            method: "PUT",
+            body: file,
+            headers: {
+              "Content-Type": presign.mediaType || mediaType,
+            },
+          });
+
+          if (!putResponse.ok) {
+            const raw = await putResponse.text().catch(() => "");
+            const code =
+              raw.match(/<Code>([^<]+)<\/Code>/i)?.[1] ??
+              (putResponse.statusText || "unknown");
+            await abortOrphanSource();
+            // CORS failures throw (caught below). A readable non-OK response is
+            // an S3 HTTP error (often SignatureDoesNotMatch / AccessDenied).
+            setError(
+              `Storage upload failed (HTTP ${putResponse.status}: ${code}).`
+            );
+            return;
+          }
+
+          const completeResponse = await fetch("/api/sources/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceId: presign.sourceId,
+              notebookId,
+            }),
+          });
+
+          if (!completeResponse.ok) {
+            await abortOrphanSource();
+          }
+
+          await handleSourceResponse(completeResponse);
           return;
+        } catch (error) {
+          await abortOrphanSource();
+          throw error;
         }
-
-        const completeResponse = await fetch("/api/sources/complete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sourceId: presign.sourceId,
-            notebookId,
-          }),
-        });
-
-        await handleSourceResponse(completeResponse);
-        return;
       }
 
       const presignPayload = (await presignResponse.json().catch(() => null)) as {
@@ -259,8 +276,12 @@ function AddSourceDialogForm({
       });
 
       await handleSourceResponse(response, file.size);
-    } catch {
-      setError("Network error during upload");
+    } catch (error) {
+      setError(
+        error instanceof Error && /upload failed/i.test(error.message)
+          ? error.message
+          : "Network error during upload"
+      );
     } finally {
       setIsUploading(false);
       setActiveLabel(null);

@@ -136,6 +136,8 @@ async function assertSourceOwner(sourceId: string, userId: string) {
 }
 
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
+/** Incomplete direct uploads (no extractedText yet) fail faster than mid-index jobs. */
+const STALE_INCOMPLETE_UPLOAD_MS = 2 * 60 * 1000;
 /** Avoid writing on every 1s router.refresh() while a source is indexing. */
 const STALE_SWEEP_INTERVAL_MS = 60_000;
 const lastStaleSweepAt = new Map<string, number>();
@@ -144,6 +146,10 @@ const lastStaleSweepAt = new Map<string, number>();
  * Mark sources stuck in PROCESSING longer than the timeout as FAILED.
  * Prevents the 1s refresh loop from running forever after a crashed after().
  * Debounced so list endpoints do not UPDATE on every poll tick.
+ *
+ * Two buckets:
+ * - incomplete direct upload (extractedText null): fail after 2m
+ * - mid-index (has extractedText): fail after 10m
  */
 async function failStaleProcessingSources(where: {
   notebookId?: string;
@@ -161,18 +167,42 @@ async function failStaleProcessingSources(where: {
   }
   lastStaleSweepAt.set(sweepKey, now);
 
-  const cutoff = new Date(now - STALE_PROCESSING_MS);
-  await prisma.source.updateMany({
+  const ownerFilter = {
+    ...(where.notebookId ? { notebookId: where.notebookId } : {}),
+    ...(where.userId
+      ? { notebook: { userId: where.userId, deletedAt: null } }
+      : {}),
+  };
+
+  const incompleteCutoff = new Date(now - STALE_INCOMPLETE_UPLOAD_MS);
+  const incomplete = await prisma.source.updateMany({
     where: {
       indexingStatus: "PROCESSING",
-      updatedAt: { lt: cutoff },
-      ...(where.notebookId ? { notebookId: where.notebookId } : {}),
-      ...(where.userId
-        ? { notebook: { userId: where.userId, deletedAt: null } }
-        : {}),
+      extractedText: null,
+      updatedAt: { lt: incompleteCutoff },
+      ...ownerFilter,
     },
     data: { indexingStatus: "FAILED" },
   });
+
+  const midIndexCutoff = new Date(now - STALE_PROCESSING_MS);
+  const midIndex = await prisma.source.updateMany({
+    where: {
+      indexingStatus: "PROCESSING",
+      NOT: { extractedText: null },
+      updatedAt: { lt: midIndexCutoff },
+      ...ownerFilter,
+    },
+    data: { indexingStatus: "FAILED" },
+  });
+
+  if (incomplete.count > 0 || midIndex.count > 0) {
+    logger.warn("[SOURCE] stale_processing_failed", {
+      incompleteCount: incomplete.count,
+      midIndexCount: midIndex.count,
+      ...where,
+    });
+  }
 }
 
 function parseSourceMetadata(value: unknown): SourceMetadata | null {
