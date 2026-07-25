@@ -99,8 +99,13 @@ export function formatSourceUploadError(error: unknown): string {
   if (/youtube transcript fetch timed out/i.test(message)) {
     return "YouTube transcript fetch timed out";
   }
+  if (/blocked transcript access|too many requests|rate limited/i.test(message)) {
+    return "YouTube temporarily blocked transcript access from this server. Try again shortly.";
+  }
   if (/youtube transcript fetch failed/i.test(message)) {
-    return "YouTube transcript fetch failed";
+    return message.startsWith("YouTube transcript fetch failed")
+      ? message
+      : "YouTube transcript fetch failed";
   }
   if (/invalid url/i.test(message)) {
     return message.includes("http")
