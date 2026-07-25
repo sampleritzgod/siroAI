@@ -1,12 +1,20 @@
 import type { BackgroundJob } from "@/generated/prisma/client";
+import { prisma } from "@/lib/db";
 import { captureException, createRequestId, logger } from "@/lib/logger";
 import { indexAttachmentForRag } from "@/modules/rag/index-attachment";
 import { hardPurgeNotebook } from "@/modules/notebook/purge";
 import { finalizeSourceIndexing } from "@/modules/source/service";
 import {
+  cleanupPartialSourceIndex,
+  isIndexingLifecycleSkip,
+  lifecycleLogMessage,
+  IndexingLifecycleSkip,
+} from "@/modules/jobs/lifecycle";
+import {
   claimNextJob,
   completeJob,
   failJob,
+  settleJobCancelled,
   updateJobProgress,
   type JobPayload,
 } from "@/modules/jobs/queue";
@@ -16,6 +24,7 @@ export type ProcessJobsResult = {
   succeeded: number;
   failed: number;
   dead: number;
+  cancelled: number;
 };
 
 /**
@@ -33,6 +42,7 @@ export async function processJobs(input?: {
     succeeded: 0,
     failed: 0,
     dead: 0,
+    cancelled: 0,
   };
 
   for (let i = 0; i < limit; i += 1) {
@@ -51,10 +61,47 @@ export async function processJobs(input?: {
         startedAt: new Date().toISOString(),
       });
       await runJob(job);
-      await completeJob(job.id, {
+
+      const current = await prisma.backgroundJob.findUnique({
+        where: { id: job.id },
+        select: { status: true },
+      });
+      if (current?.status === "CANCELLED") {
+        result.cancelled += 1;
+        logger.info(
+          job.type === "INDEX_SOURCE"
+            ? "INDEX_SOURCE cancelled"
+            : "job_cancelled",
+          {
+            jobId: job.id,
+            type: job.type,
+            reason: "cancelled_externally",
+            durationMs: Date.now() - started,
+          }
+        );
+        continue;
+      }
+
+      const completed = await completeJob(job.id, {
         stage: "completed",
         durationMs: Date.now() - started,
       });
+      if (!completed) {
+        result.cancelled += 1;
+        logger.info(
+          job.type === "INDEX_SOURCE"
+            ? "INDEX_SOURCE cancelled"
+            : "job_cancelled",
+          {
+            jobId: job.id,
+            type: job.type,
+            reason: "no_longer_running",
+            durationMs: Date.now() - started,
+          }
+        );
+        continue;
+      }
+
       result.succeeded += 1;
       logger.info("job_succeeded", {
         jobId: job.id,
@@ -63,6 +110,32 @@ export async function processJobs(input?: {
         durationMs: Date.now() - started,
       });
     } catch (error) {
+      if (isIndexingLifecycleSkip(error)) {
+        const sourceId =
+          typeof (job.payload as JobPayload).sourceId === "string"
+            ? String((job.payload as JobPayload).sourceId)
+            : undefined;
+        if (sourceId) {
+          await cleanupPartialSourceIndex(sourceId);
+        }
+        await settleJobCancelled(job.id, error.message, {
+          stage: "lifecycle_skip",
+          reason: error.reason,
+          phase: error.phase ?? null,
+          durationMs: Date.now() - started,
+        });
+        result.cancelled += 1;
+        logger.info(lifecycleLogMessage(error.reason), {
+          jobId: job.id,
+          type: job.type,
+          reason: error.reason,
+          phase: error.phase,
+          sourceId,
+          durationMs: Date.now() - started,
+        });
+        continue;
+      }
+
       await captureException(error, {
         stage: "job_worker",
         jobId: job.id,
@@ -87,6 +160,28 @@ async function runJob(job: BackgroundJob): Promise<void> {
       if (!sourceId || !notebookId) {
         throw new Error("Invalid INDEX_SOURCE payload");
       }
+
+      const source = await prisma.source.findFirst({
+        where: { id: sourceId, notebookId },
+        select: { id: true, indexingStatus: true },
+      });
+
+      if (!source) {
+        throw new IndexingLifecycleSkip(
+          "source_deleted",
+          lifecycleLogMessage("source_deleted")
+        );
+      }
+
+      if (source.indexingStatus === "INDEXED") {
+        logger.info(lifecycleLogMessage("already_completed"), {
+          jobId: job.id,
+          sourceId,
+          notebookId,
+        });
+        return;
+      }
+
       await updateJobProgress(job.id, { stage: "indexing_source", sourceId });
       await finalizeSourceIndexing({ sourceId, notebookId });
       return;
@@ -102,7 +197,6 @@ async function runJob(job: BackgroundJob): Promise<void> {
         attachmentId,
       });
 
-      const { prisma } = await import("@/lib/db");
       const attachment = await prisma.attachment.findFirst({
         where: { id: attachmentId, conversationId },
         select: { extractedText: true },

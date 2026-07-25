@@ -181,12 +181,16 @@ export async function claimNextJob(input: {
   return null;
 }
 
+/**
+ * Mark a RUNNING job SUCCEEDED. No-op if the job was CANCELLED mid-flight
+ * (e.g. source deleted while the worker was still indexing).
+ */
 export async function completeJob(
   jobId: string,
   progress?: JobPayload
-): Promise<void> {
-  await prisma.backgroundJob.update({
-    where: { id: jobId },
+): Promise<boolean> {
+  const result = await prisma.backgroundJob.updateMany({
+    where: { id: jobId, status: "RUNNING" },
     data: {
       status: "SUCCEEDED",
       completedAt: new Date(),
@@ -196,6 +200,33 @@ export async function completeJob(
       ...(progress ? { progress: asJson(progress) } : {}),
     },
   });
+  return result.count === 1;
+}
+
+/**
+ * Terminal cancel/skip for lifecycle outcomes (deleted source, duplicate, etc.).
+ * Never schedules a retry. Safe if already CANCELLED.
+ */
+export async function settleJobCancelled(
+  jobId: string,
+  reason: string,
+  progress?: JobPayload
+): Promise<boolean> {
+  const result = await prisma.backgroundJob.updateMany({
+    where: {
+      id: jobId,
+      status: { in: ["RUNNING", "PENDING", "FAILED"] },
+    },
+    data: {
+      status: "CANCELLED",
+      completedAt: new Date(),
+      lockedAt: null,
+      lockedBy: null,
+      lastError: reason.slice(0, 2000),
+      ...(progress ? { progress: asJson(progress) } : {}),
+    },
+  });
+  return result.count === 1;
 }
 
 export async function failJob(

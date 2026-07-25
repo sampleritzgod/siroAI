@@ -10,6 +10,16 @@ import {
   resolveStorageFromPath,
   storeUpload,
 } from "@/modules/files/storage";
+import {
+  cleanupPartialSourceIndex,
+  isIndexingLifecycleSkip,
+  IndexingLifecycleSkip,
+  lifecycleLogMessage,
+} from "@/modules/jobs/lifecycle";
+import {
+  cancelJobByIdempotencyKey,
+  indexSourceIdempotencyKey,
+} from "@/modules/jobs/queue";
 import { indexSourceForRag } from "@/modules/rag/index-source";
 import { stageLog } from "@/modules/rag/pipeline-log";
 import {
@@ -41,9 +51,14 @@ import {
   type VttSourceMetadata,
 } from "@/modules/source/parse-vtt";
 import {
-  cancelJobByIdempotencyKey,
-  indexSourceIdempotencyKey,
-} from "@/modules/jobs/queue";
+  notFound,
+  conflict,
+  databaseError,
+  payloadTooLarge,
+  unprocessable,
+  unsupportedMedia,
+  validation,
+} from "@/lib/errors";
 
 /**
  * Source.metadata is source-type specific. Fields are optional so one type can
@@ -84,17 +99,6 @@ export type SourceListItem = {
   createdAt: Date;
   updatedAt: Date;
 };
-
-import {
-  notFound,
-  conflict,
-  databaseError,
-  payloadTooLarge,
-  unprocessable,
-  unsupportedMedia,
-  validation,
-} from "@/lib/errors";
-
 async function assertNotebookOwner(notebookId: string, userId: string) {
   const notebook = await prisma.notebook.findFirst({
     where: { id: notebookId, userId, deletedAt: null },
@@ -866,6 +870,9 @@ export async function createSourceFromYoutube(input: {
 /**
  * Chunk → embed → persist vectors → INDEXED (or FAILED).
  * Intended to run after upload returns (e.g. Next.js after()).
+ *
+ * Lifecycle: missing/deleted sources throw IndexingLifecycleSkip (no ERROR,
+ * no retry). Re-runs are idempotent via chunk replace in indexSourceForRag.
  */
 export async function finalizeSourceIndexing(input: {
   sourceId: string;
@@ -879,10 +886,17 @@ export async function finalizeSourceIndexing(input: {
   });
 
   if (!source) {
-    throw notFound("Source not found");
+    throw new IndexingLifecycleSkip(
+      "source_deleted",
+      lifecycleLogMessage("source_deleted")
+    );
   }
 
   if (source.indexingStatus === "INDEXED") {
+    logger.info(lifecycleLogMessage("already_completed"), {
+      sourceId: source.id,
+      notebookId: source.notebookId,
+    });
     return toSourceRecord(source);
   }
 
@@ -914,6 +928,20 @@ export async function finalizeSourceIndexing(input: {
       );
     }
 
+    // Source may have been deleted between vector insert and this update.
+    const stillExists = await prisma.source.findFirst({
+      where: { id: source.id, notebookId: source.notebookId },
+      select: { id: true },
+    });
+    if (!stillExists) {
+      await cleanupPartialSourceIndex(source.id);
+      throw new IndexingLifecycleSkip(
+        "source_deleted_during_indexing",
+        lifecycleLogMessage("source_deleted_during_indexing"),
+        "finalize"
+      );
+    }
+
     const saved = await prisma.source.update({
       where: { id: source.id },
       data: { indexingStatus: "INDEXED" },
@@ -929,18 +957,28 @@ export async function finalizeSourceIndexing(input: {
 
     return toSourceRecord(saved);
   } catch (error) {
+    if (isIndexingLifecycleSkip(error)) {
+      await cleanupPartialSourceIndex(source.id);
+      throw error;
+    }
+
     logger.error("[UPLOAD] indexing_failed", {
       sourceId: source.id,
       error: formatSourceUploadError(error),
     });
 
-    await prisma.$executeRaw`
-      DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}
-    `;
-    await prisma.source.update({
+    await cleanupPartialSourceIndex(source.id);
+
+    const stillExists = await prisma.source.findFirst({
       where: { id: source.id },
-      data: { indexingStatus: "FAILED" },
+      select: { id: true },
     });
+    if (stillExists) {
+      await prisma.source.update({
+        where: { id: source.id },
+        data: { indexingStatus: "FAILED" },
+      });
+    }
 
     throw error instanceof Error
       ? error

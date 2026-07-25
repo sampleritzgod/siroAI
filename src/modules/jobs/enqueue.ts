@@ -1,9 +1,12 @@
 import { after } from "next/server";
+import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import {
   enqueueJob,
   indexAttachmentIdempotencyKey,
   indexSourceIdempotencyKey,
 } from "@/modules/jobs/queue";
+import { lifecycleLogMessage } from "@/modules/jobs/lifecycle";
 import { processJobs } from "@/modules/jobs/worker";
 
 /**
@@ -34,9 +37,56 @@ export async function enqueueSourceIndexing(input: {
   sourceId: string;
   notebookId: string;
 }) {
+  const source = await prisma.source.findFirst({
+    where: { id: input.sourceId, notebookId: input.notebookId },
+    select: { id: true, indexingStatus: true },
+  });
+
+  if (!source) {
+    logger.info(lifecycleLogMessage("source_deleted"), {
+      sourceId: input.sourceId,
+      notebookId: input.notebookId,
+    });
+    return;
+  }
+
+  if (source.indexingStatus === "INDEXED") {
+    logger.info(lifecycleLogMessage("already_completed"), {
+      sourceId: input.sourceId,
+      notebookId: input.notebookId,
+    });
+    return;
+  }
+
+  const idempotencyKey = indexSourceIdempotencyKey(input.sourceId);
+  const existing = await prisma.backgroundJob.findUnique({
+    where: { idempotencyKey },
+  });
+
+  // Duplicate INDEX_SOURCE while already queued or actively processing.
+  if (
+    existing &&
+    (existing.status === "PENDING" ||
+      existing.status === "RUNNING" ||
+      existing.status === "SUCCEEDED")
+  ) {
+    logger.info(lifecycleLogMessage("duplicate_ignored"), {
+      sourceId: input.sourceId,
+      notebookId: input.notebookId,
+      jobId: existing.id,
+      jobStatus: existing.status,
+      indexingStatus: source.indexingStatus,
+    });
+    if (existing.status === "PENDING" || existing.status === "RUNNING") {
+      await kickDrain(["INDEX_SOURCE"]);
+    }
+    return;
+  }
+
+  // PROCESSING/FAILED with no active job (or DEAD/CANCELLED): enqueue/retry.
   await enqueueJob({
     type: "INDEX_SOURCE",
-    idempotencyKey: indexSourceIdempotencyKey(input.sourceId),
+    idempotencyKey,
     payload: {
       sourceId: input.sourceId,
       notebookId: input.notebookId,

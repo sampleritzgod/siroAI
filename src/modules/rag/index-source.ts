@@ -1,5 +1,10 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import {
+  assertSourceAliveForIndexing,
+  cleanupPartialSourceIndex,
+  isIndexingLifecycleSkip,
+} from "@/modules/jobs/lifecycle";
 import { chunkText } from "@/modules/rag/chunk";
 import {
   EMBEDDING_DIMENSIONS,
@@ -17,9 +22,41 @@ export type IndexSourceResult = {
   reason?: string;
 };
 
+export type IndexingPhase =
+  | "extraction"
+  | "chunking"
+  | "embedding"
+  | "vector_insert";
+
+type IndexingPhaseHook = (phase: IndexingPhase) => Promise<void>;
+
+/** Test-only hook: runs after the source-alive check at each major stage. */
+let indexingPhaseHookForTests: IndexingPhaseHook | null = null;
+
+export function setIndexingPhaseHookForTests(
+  hook: IndexingPhaseHook | null
+): void {
+  indexingPhaseHookForTests = hook;
+}
+
+async function checkpointSourceAlive(input: {
+  sourceId: string;
+  notebookId: string;
+  phase: IndexingPhase;
+}): Promise<void> {
+  await assertSourceAliveForIndexing(input);
+  if (indexingPhaseHookForTests) {
+    await indexingPhaseHookForTests(input.phase);
+    await assertSourceAliveForIndexing(input);
+  }
+}
+
 /**
  * Index (or re-index) a notebook source's extracted text into DocumentChunk rows.
  * Scoped by notebookId + sourceId for notebook-level retrieval.
+ *
+ * Idempotent: replaces all chunks for the source on each successful run.
+ * Deletion-safe: aborts cleanly if the source disappears between stages.
  */
 export async function indexSourceForRag(input: {
   sourceId: string;
@@ -30,12 +67,16 @@ export async function indexSourceForRag(input: {
   const embedStage = stageLog("EMBED");
   const vectorStage = stageLog("VECTOR");
 
+  await checkpointSourceAlive({
+    sourceId: input.sourceId,
+    notebookId: input.notebookId,
+    phase: "extraction",
+  });
+
   const text = indexableSourceText(input.extractedText);
   if (!text) {
     chunkStage.started({ sourceId: input.sourceId, notebookId: input.notebookId });
-    await prisma.$executeRaw`
-      DELETE FROM "DocumentChunk" WHERE "sourceId" = ${input.sourceId}
-    `;
+    await cleanupPartialSourceIndex(input.sourceId);
     chunkStage.completed({
       sourceId: input.sourceId,
       chunkCount: 0,
@@ -50,6 +91,12 @@ export async function indexSourceForRag(input: {
       reason: "no_indexable_text",
     };
   }
+
+  await checkpointSourceAlive({
+    sourceId: input.sourceId,
+    notebookId: input.notebookId,
+    phase: "chunking",
+  });
 
   chunkStage.started({
     sourceId: input.sourceId,
@@ -82,6 +129,12 @@ export async function indexSourceForRag(input: {
       reason: "no_chunks",
     };
   }
+
+  await checkpointSourceAlive({
+    sourceId: input.sourceId,
+    notebookId: input.notebookId,
+    phase: "embedding",
+  });
 
   embedStage.started({
     sourceId: input.sourceId,
@@ -122,6 +175,12 @@ export async function indexSourceForRag(input: {
     embeddingDimensions: dimensions,
   });
 
+  await checkpointSourceAlive({
+    sourceId: input.sourceId,
+    notebookId: input.notebookId,
+    phase: "vector_insert",
+  });
+
   vectorStage.started({
     sourceId: input.sourceId,
     notebookId: input.notebookId,
@@ -129,15 +188,20 @@ export async function indexSourceForRag(input: {
   });
 
   try {
-    await prisma.$executeRaw`
-      DELETE FROM "DocumentChunk" WHERE "sourceId" = ${input.sourceId}
-    `;
+    // Idempotent replace — never accumulate duplicate chunks/vectors.
+    await cleanupPartialSourceIndex(input.sourceId);
 
     // Multi-row inserts: one round trip per batch instead of per chunk.
     // Critical on serverless (Vercel → Neon), where 100 sequential inserts
     // can take 20s+ and blow past the function time limit.
     const INSERT_BATCH_SIZE = 30;
     for (let i = 0; i < chunks.length; i += INSERT_BATCH_SIZE) {
+      await checkpointSourceAlive({
+        sourceId: input.sourceId,
+        notebookId: input.notebookId,
+        phase: "vector_insert",
+      });
+
       const batch = chunks.slice(i, i + INSERT_BATCH_SIZE);
       const rows = batch.map((chunk, j) => {
         const embedding = embeddings[i + j]!;
@@ -180,7 +244,13 @@ export async function indexSourceForRag(input: {
       embeddingDimensions: dimensions,
     });
   } catch (error) {
-    vectorStage.error(error, { sourceId: input.sourceId });
+    if (!isIndexingLifecycleSkip(error)) {
+      vectorStage.error(error, { sourceId: input.sourceId });
+    }
+    // Abort mid-insert: remove any partial batches for this source.
+    if (isIndexingLifecycleSkip(error)) {
+      await cleanupPartialSourceIndex(input.sourceId);
+    }
     throw error;
   }
 
