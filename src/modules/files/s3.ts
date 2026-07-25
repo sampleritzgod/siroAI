@@ -240,3 +240,33 @@ export async function s3GetSignedUrl(
     toStorageError(error, "Storage error: S3 signed URL failed");
   }
 }
+
+/**
+ * Time-limited PUT URL so the browser can upload directly to S3
+ * (bypasses the Vercel Function 4.5MB request body limit).
+ */
+export async function s3GetPutSignedUrl(input: {
+  key: string;
+  contentType: string;
+  expiresInSeconds?: number;
+}): Promise<string> {
+  try {
+    const client = getS3Client();
+    if (clientOverride && !(client instanceof S3Client)) {
+      throw storageError(
+        "Storage error: Signed URLs require a real S3 client"
+      );
+    }
+    return await getSignedUrl(
+      client as S3Client,
+      new PutObjectCommand({
+        Bucket: getS3Bucket(),
+        Key: input.key,
+        ContentType: input.contentType,
+      }),
+      { expiresIn: input.expiresInSeconds ?? 900 }
+    );
+  } catch (error) {
+    toStorageError(error, "Storage error: S3 upload URL failed");
+  }
+}

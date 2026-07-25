@@ -155,6 +155,79 @@ function AddSourceDialogForm({
     setIsUploading(true);
 
     try {
+      const mediaType =
+        resolveSourceMediaType({
+          filename: file.name,
+          fileType: file.type,
+        }) ?? file.type;
+
+      // Prefer browser → S3 direct upload (avoids Vercel’s 4.5MB body limit).
+      const presignResponse = await fetch("/api/sources/presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notebookId,
+          filename: file.name,
+          contentType: mediaType,
+          size: file.size,
+        }),
+      });
+
+      if (presignResponse.ok) {
+        const presign = (await presignResponse.json()) as {
+          sourceId?: string;
+          uploadUrl?: string;
+          mediaType?: string;
+          error?: string;
+        };
+
+        if (!presign.sourceId || !presign.uploadUrl) {
+          setError(presign.error || "Could not start upload");
+          return;
+        }
+
+        const putResponse = await fetch(presign.uploadUrl, {
+          method: "PUT",
+          body: file,
+          headers: {
+            "Content-Type": presign.mediaType || mediaType,
+          },
+        });
+
+        if (!putResponse.ok) {
+          setError(
+            "Could not upload file to storage. If this persists, check S3 CORS for this site."
+          );
+          return;
+        }
+
+        const completeResponse = await fetch("/api/sources/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceId: presign.sourceId,
+            notebookId,
+          }),
+        });
+
+        await handleSourceResponse(completeResponse);
+        return;
+      }
+
+      // S3 not configured (501) or small-file fallback: multipart through the API.
+      if (presignResponse.status !== 501) {
+        const payload = (await presignResponse.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        if (presignResponse.status === 413 || payload?.error) {
+          setError(
+            payload?.error ||
+              `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+          );
+          return;
+        }
+      }
+
       const form = new FormData();
       form.set("notebookId", notebookId);
       form.set("file", file);
@@ -464,7 +537,8 @@ function AddSourceDialogForm({
             </button>
 
             <p className="text-[11px] text-[var(--muted)]">
-              Files: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")} · Websites &amp;
+              Files: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")} (max{" "}
+              {MAX_UPLOAD_BYTES / (1024 * 1024)}MB) · Websites &amp;
               YouTube: public http(s) links
             </p>
           </div>

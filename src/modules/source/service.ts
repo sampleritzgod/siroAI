@@ -6,10 +6,13 @@ import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
 import { extractAttachmentContent } from "@/modules/files/extract-text";
 import {
+  createDirectUploadUrl,
   deleteStoredUpload,
   resolveStorageFromPath,
+  readStoredUploadBytes,
   storeUpload,
 } from "@/modules/files/storage";
+import { isS3Configured } from "@/modules/files/s3";
 import {
   cleanupPartialSourceIndex,
   isIndexingLifecycleSkip,
@@ -55,6 +58,7 @@ import {
   conflict,
   databaseError,
   payloadTooLarge,
+  storageError,
   unprocessable,
   unsupportedMedia,
   validation,
@@ -667,6 +671,316 @@ export async function createSourceFromUpload(input: {
       });
     } catch {
       // Best-effort status update.
+    }
+
+    throw error instanceof Error
+      ? error
+      : new Error(formatSourceUploadError(error));
+  }
+}
+
+/**
+ * Step 1 of direct-to-S3 upload (bypasses Vercel’s 4.5MB body limit).
+ * Returns null when S3 is not configured — callers should use multipart instead.
+ */
+export async function beginSourceDirectUpload(input: {
+  userId: string;
+  notebookId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+}): Promise<{
+  sourceId: string;
+  uploadUrl: string;
+  storageKey: string;
+  mediaType: string;
+} | null> {
+  if (!isS3Configured()) return null;
+
+  await assertNotebookOwner(input.notebookId, input.userId);
+
+  const originalFileName = input.filename?.trim() || "upload";
+  const mediaType = resolveSourceMediaType({
+    filename: originalFileName,
+    fileType: input.contentType,
+  });
+
+  if (!mediaType) {
+    throw unsupportedMedia(
+      "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
+    );
+  }
+
+  if (input.size <= 0) {
+    throw payloadTooLarge("File is empty.");
+  }
+
+  if (input.size > MAX_UPLOAD_BYTES) {
+    throw payloadTooLarge(
+      `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+    );
+  }
+
+  const type = sourceTypeFromMediaType(mediaType);
+  const title =
+    type === "VTT"
+      ? defaultTitleFromVttFilename(originalFileName)
+      : defaultTitleFromFilename(originalFileName);
+
+  if (type === "VTT") {
+    await assertNoDuplicateVtt({
+      notebookId: input.notebookId,
+      originalFileName,
+      fileSize: input.size,
+    });
+  }
+
+  const pending = await prisma.source.create({
+    data: {
+      notebookId: input.notebookId,
+      type,
+      title,
+      originalFileName,
+      mimeType: mediaType,
+      fileSize: input.size,
+      storagePath: "pending",
+      indexingStatus: "PROCESSING",
+    },
+  });
+
+  try {
+    const direct = await createDirectUploadUrl({
+      attachmentId: pending.id,
+      filename: originalFileName,
+      mediaType,
+    });
+    if (!direct) {
+      await prisma.source.delete({ where: { id: pending.id } });
+      return null;
+    }
+
+    await prisma.source.update({
+      where: { id: pending.id },
+      data: { storagePath: direct.storageKey },
+    });
+
+    logger.info("[UPLOAD] direct_presign", {
+      sourceId: pending.id,
+      notebookId: input.notebookId,
+      storageKey: direct.storageKey,
+      size: input.size,
+    });
+
+    return {
+      sourceId: pending.id,
+      uploadUrl: direct.uploadUrl,
+      storageKey: direct.storageKey,
+      mediaType,
+    };
+  } catch (error) {
+    await prisma.source.delete({ where: { id: pending.id } }).catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Step 2 of direct-to-S3 upload: object is already in S3; extract + queue index.
+ */
+export async function completeSourceDirectUpload(input: {
+  userId: string;
+  sourceId: string;
+  notebookId: string;
+}): Promise<SourceRecord> {
+  const uploadStage = stageLog("UPLOAD");
+  uploadStage.started({
+    sourceId: input.sourceId,
+    notebookId: input.notebookId,
+    kind: "direct_complete",
+  });
+
+  const source = await assertSourceOwner(input.sourceId, input.userId);
+  if (source.notebookId !== input.notebookId) {
+    throw notFound("Source not found");
+  }
+
+  if (
+    !source.storagePath ||
+    source.storagePath === "pending" ||
+    resolveStorageFromPath(source.storagePath) !== "S3"
+  ) {
+    throw validation("Source is not awaiting direct upload completion");
+  }
+
+  if (source.extractedText?.trim()) {
+    return toSourceRecord(source);
+  }
+
+  const storageKey = source.storagePath;
+  let bytes: Buffer;
+  try {
+    bytes = await readStoredUploadBytes({
+      storage: "S3",
+      storageKey,
+    });
+  } catch (error) {
+    uploadStage.error(error, { sourceId: source.id });
+    throw storageError(
+      "Upload incomplete. Please try uploading the file again."
+    );
+  }
+
+  if (bytes.length <= 0) {
+    throw payloadTooLarge("File is empty.");
+  }
+
+  if (bytes.length > MAX_UPLOAD_BYTES) {
+    await deleteStoredUpload({
+      objectId: source.id,
+      storage: "S3",
+      storageKey,
+    }).catch(() => {});
+    await prisma.source.delete({ where: { id: source.id } }).catch(() => {});
+    throw payloadTooLarge(
+      `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+    );
+  }
+
+  try {
+    let parsedVtt: ParsedVtt | null = null;
+    let extractedText: string | null = null;
+
+    const extractStage = stageLog("EXTRACT");
+    extractStage.started({
+      sourceId: source.id,
+      mimeType: source.mimeType,
+    });
+
+    if (source.type === "VTT") {
+      try {
+        parsedVtt = parseVtt(bytes.toString("utf8"));
+        extractedText = parsedVtt.transcript;
+      } catch (error) {
+        extractStage.error(error, { sourceId: source.id });
+        throw error instanceof Error
+          ? error
+          : new Error("Invalid VTT file: could not parse subtitles.");
+      }
+      extractStage.completed({
+        sourceId: source.id,
+        chars: parsedVtt.transcript.length,
+        cueCount: parsedVtt.cueCount,
+        language: parsedVtt.language,
+      });
+    } else {
+      try {
+        const extracted = await extractAttachmentContent({
+          attachmentId: source.id,
+          filename: source.originalFileName,
+          mediaType: source.mimeType,
+          bytes,
+        });
+        extractedText = extracted.extractedText?.trim() || null;
+      } catch (error) {
+        extractStage.error(error, { sourceId: source.id });
+        if (source.mimeType === "application/pdf") {
+          throw unprocessable("PDF extraction failed");
+        }
+        throw unprocessable("Text extraction failed");
+      }
+
+      if (!extractedText) {
+        const error = new Error(
+          source.mimeType === "application/pdf"
+            ? "PDF extraction failed"
+            : "No extractable text found in this file."
+        );
+        extractStage.error(error, { sourceId: source.id });
+        throw error;
+      }
+
+      if (extractedText.startsWith("SIRO_PDF_VISION:")) {
+        const newline = extractedText.indexOf("\n");
+        const remainder =
+          newline === -1 ? "" : extractedText.slice(newline).trim();
+        const isVisionStub =
+          !remainder ||
+          remainder.startsWith("[PDF has no extractable text layer");
+        if (isVisionStub) {
+          const error = new Error(
+            "PDF extraction failed: no embeddable text (image-only PDF)."
+          );
+          extractStage.error(error, { sourceId: source.id });
+          throw error;
+        }
+        extractedText = remainder;
+      }
+
+      extractStage.completed({
+        sourceId: source.id,
+        chars: extractedText.length,
+        encoding: "utf8",
+      });
+    }
+
+    if (!extractedText) {
+      throw unprocessable("No extractable text found in this file.");
+    }
+
+    const saved = await prisma.source.update({
+      where: { id: source.id },
+      data: {
+        fileSize: bytes.length,
+        storagePath: storageKey,
+        extractedText,
+        ...(parsedVtt ? { metadata: toVttMetadata(parsedVtt) } : {}),
+        indexingStatus: "PROCESSING",
+      },
+    });
+
+    uploadStage.completed({
+      sourceId: saved.id,
+      notebookId: saved.notebookId,
+      indexingStatus: saved.indexingStatus,
+      hasExtractedText: true,
+      indexing: "queued",
+      mode: "direct_s3",
+    });
+
+    return toSourceRecord(saved);
+  } catch (error) {
+    uploadStage.error(error, { sourceId: source.id });
+    logger.error("[UPLOAD] failed", {
+      sourceId: source.id,
+      error: formatSourceUploadError(error),
+    });
+
+    try {
+      await deleteStoredUpload({
+        objectId: source.id,
+        storage: "S3",
+        storageKey,
+      });
+    } catch {
+      // Best-effort.
+    }
+
+    try {
+      await prisma.$executeRaw`
+        DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}
+      `;
+      await prisma.source.delete({ where: { id: source.id } });
+    } catch {
+      try {
+        await prisma.source.update({
+          where: { id: source.id },
+          data: {
+            indexingStatus: "FAILED",
+            extractedText: null,
+          },
+        });
+      } catch {
+        // Best-effort.
+      }
     }
 
     throw error instanceof Error

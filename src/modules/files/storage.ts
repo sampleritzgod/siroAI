@@ -8,6 +8,7 @@ import {
   s3DeleteObject,
   s3GetObject,
   s3GetObjectBytes,
+  s3GetPutSignedUrl,
   s3GetSignedUrl,
   s3ObjectExists,
   s3PutObject,
@@ -97,6 +98,32 @@ export function resolveStorageFromPath(
  * Persist bytes to S3 when configured, else Vercel Blob, else local disk.
  * On Vercel without S3/Blob, local disk is ephemeral and must not be used.
  */
+export function buildAttachmentStorageKey(
+  attachmentId: string,
+  filename: string
+): string {
+  return `attachments/${attachmentId}/${sanitizeFilename(filename)}`;
+}
+
+/** Presigned PUT for browser → S3 direct upload (when S3 is configured). */
+export async function createDirectUploadUrl(input: {
+  attachmentId: string;
+  filename: string;
+  mediaType: string;
+}): Promise<{ storageKey: string; uploadUrl: string } | null> {
+  if (!isS3Configured()) return null;
+
+  const storageKey = buildAttachmentStorageKey(
+    input.attachmentId,
+    input.filename
+  );
+  const uploadUrl = await s3GetPutSignedUrl({
+    key: storageKey,
+    contentType: input.mediaType,
+  });
+  return { storageKey, uploadUrl };
+}
+
 export async function storeUpload(input: {
   attachmentId: string;
   filename: string;
@@ -107,7 +134,7 @@ export async function storeUpload(input: {
 
   if (isS3Configured()) {
     try {
-      const key = `attachments/${input.attachmentId}/${safeName}`;
+      const key = buildAttachmentStorageKey(input.attachmentId, input.filename);
       await s3PutObject({
         key,
         body: input.bytes,
