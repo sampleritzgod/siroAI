@@ -15,7 +15,7 @@ import {
   retrieveRelevantChunks,
 } from "@/modules/rag/retrieve";
 import {
-  createSourceFromUpload,
+  createIndexedSourceFromUpload,
   deleteSourceForUser,
 } from "@/modules/source/service";
 
@@ -63,7 +63,7 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
 
   it("Test Case 1: create notebook → upload → INDEXED → retrieve grounded context", async () => {
     const uploadStarted = Date.now();
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId,
       notebookId,
       file: makeTextFile("quantum.txt", DOC_A),
@@ -129,7 +129,7 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
   });
 
   it("Test Case 2: unrelated question still retrieves notebook context (or empty)", async () => {
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId,
       notebookId,
       file: makeTextFile("quantum-2.txt", DOC_A),
@@ -157,7 +157,7 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
   });
 
   it("Test Case 3: delete source → retrieval returns nothing", async () => {
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId,
       notebookId,
       file: makeTextFile("to-delete.txt", DOC_A),
@@ -182,12 +182,12 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
   });
 
   it("Test Case 4: multiple PDFs/sources → retrieval spans all sources", async () => {
-    const sourceA = await createSourceFromUpload({
+    const sourceA = await createIndexedSourceFromUpload({
       userId,
       notebookId,
       file: makeTextFile("physics.txt", DOC_A),
     });
-    const sourceB = await createSourceFromUpload({
+    const sourceB = await createIndexedSourceFromUpload({
       userId,
       notebookId,
       file: makeTextFile("biology.txt", DOC_B),

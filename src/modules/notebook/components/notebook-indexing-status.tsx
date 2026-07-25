@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import type { SourceListItem } from "@/modules/source/service";
 
 const STEPS = [
@@ -22,10 +24,46 @@ export function NotebookIndexingStatus({
     sources[0];
 
   const failed = sources.every((source) => source.indexingStatus === "FAILED");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    if (failed) return;
+
+    setStepIndex(0);
+    setElapsedSec(0);
+
+    const stepTimers = [
+      window.setTimeout(() => setStepIndex(1), 700),
+      window.setTimeout(() => setStepIndex(2), 1600),
+      window.setTimeout(() => setStepIndex(3), 2800),
+    ];
+    const tick = window.setInterval(() => {
+      setElapsedSec((value) => value + 1);
+    }, 1000);
+
+    return () => {
+      for (const timer of stepTimers) window.clearTimeout(timer);
+      window.clearInterval(tick);
+    };
+  }, [failed, active?.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto bg-[var(--background)] px-6 py-10">
       <div className="w-full max-w-sm text-center">
+        <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-[var(--accent)]/10">
+          {failed ? (
+            <span className="text-lg text-red-500" aria-hidden="true">
+              !
+            </span>
+          ) : (
+            <span
+              className="size-6 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+              aria-hidden="true"
+            />
+          )}
+        </div>
+
         <h2 className="text-xl font-semibold tracking-tight">
           {failed ? "Indexing failed" : "Preparing your notebook"}
         </h2>
@@ -36,23 +74,50 @@ export function NotebookIndexingStatus({
               ? `Working on “${active.title}”`
               : "Working on your sources"}
         </p>
+        {!failed ? (
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            {elapsedSec < 1
+              ? "Starting embeddings…"
+              : `${elapsedSec}s · usually finishes in under a minute`}
+          </p>
+        ) : null}
 
         {!failed ? (
-          <ol className="mt-8 space-y-3 text-left">
-            {STEPS.map((step, index) => (
-              <li
-                key={step}
-                className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm"
-              >
-                <span
-                  className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent)]/10 text-xs font-medium text-[var(--accent)]"
-                  aria-hidden="true"
+          <ol className="mt-8 space-y-3 text-left" aria-live="polite">
+            {STEPS.map((step, index) => {
+              const done = index < stepIndex;
+              const current = index === stepIndex;
+              return (
+                <li
+                  key={step}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm",
+                    current
+                      ? "border-[var(--accent)]/40 bg-[var(--accent)]/5 text-[var(--foreground)]"
+                      : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]"
+                  )}
                 >
-                  {index + 1}
-                </span>
-                <span>{step}</span>
-              </li>
-            ))}
+                  <span
+                    className={cn(
+                      "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium",
+                      done || current
+                        ? "bg-[var(--accent)]/10 text-[var(--accent)]"
+                        : "bg-[var(--sidebar)] text-[var(--muted)]"
+                    )}
+                    aria-hidden="true"
+                  >
+                    {done ? "✓" : index + 1}
+                  </span>
+                  <span className={cn(current && "font-medium")}>{step}</span>
+                  {current ? (
+                    <span
+                      className="ml-auto size-3.5 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         ) : null}
 

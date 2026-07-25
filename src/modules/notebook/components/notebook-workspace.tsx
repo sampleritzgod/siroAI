@@ -61,7 +61,7 @@ export function NotebookWorkspace({
     if (!indexing) return;
     const timer = window.setInterval(() => {
       router.refresh();
-    }, 2000);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [indexing, router]);
 

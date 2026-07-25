@@ -164,8 +164,9 @@ export async function getSourceForUser(input: {
 }
 
 /**
- * Upload → store → extract → chunk → embed → INDEXED.
- * Chat unlocks only after DocumentChunk vectors exist.
+ * Upload → store → extract.
+ * Returns PROCESSING quickly so the client can show indexing progress.
+ * Call finalizeSourceIndexing (usually via after()) for chunk → embed → INDEXED.
  */
 export async function createSourceFromUpload(input: {
   userId: string;
@@ -324,7 +325,7 @@ export async function createSourceFromUpload(input: {
       encoding: "utf8",
     });
 
-    await prisma.source.update({
+    const saved = await prisma.source.update({
       where: { id: pending.id },
       data: {
         storagePath: stored.storageKey,
@@ -333,48 +334,12 @@ export async function createSourceFromUpload(input: {
       },
     });
 
-    let indexed;
-    try {
-      indexed = await indexSourceForRag({
-        sourceId: pending.id,
-        notebookId: input.notebookId,
-        extractedText,
-      });
-    } catch (error) {
-      throw new Error(
-        error instanceof Error && /OPENAI_API_KEY/i.test(error.message)
-          ? "Embeddings missing: OPENAI_API_KEY is not configured"
-          : error instanceof Error
-            ? error.message
-            : "Embeddings missing"
-      );
-    }
-
-    if (indexed.skipped || indexed.chunkCount === 0) {
-      throw new Error(
-        indexed.reason === "no_indexable_text"
-          ? "No extractable text found for embeddings"
-          : "Chunking produced zero chunks"
-      );
-    }
-
-    const saved = await prisma.source.update({
-      where: { id: pending.id },
-      data: {
-        storagePath: stored.storageKey,
-        extractedText,
-        indexingStatus: "INDEXED",
-      },
-    });
-
     uploadStage.completed({
       sourceId: saved.id,
       notebookId: saved.notebookId,
       indexingStatus: saved.indexingStatus,
-      chunkCount: indexed.chunkCount,
-      averageChunkSize: indexed.averageChunkSize,
-      embeddingDimensions: indexed.embeddingDimensions,
       hasExtractedText: true,
+      indexing: "queued",
     });
 
     return saved;
@@ -424,6 +389,104 @@ export async function createSourceFromUpload(input: {
       ? error
       : new Error(formatSourceUploadError(error));
   }
+}
+
+/**
+ * Chunk → embed → persist vectors → INDEXED (or FAILED).
+ * Intended to run after upload returns (e.g. Next.js after()).
+ */
+export async function finalizeSourceIndexing(input: {
+  sourceId: string;
+  notebookId: string;
+}): Promise<SourceRecord> {
+  const source = await prisma.source.findFirst({
+    where: {
+      id: input.sourceId,
+      notebookId: input.notebookId,
+    },
+  });
+
+  if (!source) {
+    throw new Error("Source not found");
+  }
+
+  if (source.indexingStatus === "INDEXED") {
+    return source;
+  }
+
+  if (!source.extractedText?.trim()) {
+    const failed = await prisma.source.update({
+      where: { id: source.id },
+      data: { indexingStatus: "FAILED" },
+    });
+    throw new Error("No extractable text found for embeddings");
+  }
+
+  try {
+    await prisma.source.update({
+      where: { id: source.id },
+      data: { indexingStatus: "PROCESSING" },
+    });
+
+    const indexed = await indexSourceForRag({
+      sourceId: source.id,
+      notebookId: source.notebookId,
+      extractedText: source.extractedText,
+    });
+
+    if (indexed.skipped || indexed.chunkCount === 0) {
+      throw new Error(
+        indexed.reason === "no_indexable_text"
+          ? "No extractable text found for embeddings"
+          : "Chunking produced zero chunks"
+      );
+    }
+
+    const saved = await prisma.source.update({
+      where: { id: source.id },
+      data: { indexingStatus: "INDEXED" },
+    });
+
+    logger.info("[UPLOAD] indexing_complete", {
+      sourceId: saved.id,
+      notebookId: saved.notebookId,
+      chunkCount: indexed.chunkCount,
+      averageChunkSize: indexed.averageChunkSize,
+      embeddingDimensions: indexed.embeddingDimensions,
+    });
+
+    return saved;
+  } catch (error) {
+    logger.error("[UPLOAD] indexing_failed", {
+      sourceId: source.id,
+      error: formatSourceUploadError(error),
+    });
+
+    await prisma.$executeRaw`
+      DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}
+    `;
+    await prisma.source.update({
+      where: { id: source.id },
+      data: { indexingStatus: "FAILED" },
+    });
+
+    throw error instanceof Error
+      ? error
+      : new Error(formatSourceUploadError(error));
+  }
+}
+
+/** Test helper: upload + finish indexing in one call. */
+export async function createIndexedSourceFromUpload(input: {
+  userId: string;
+  notebookId: string;
+  file: File;
+}): Promise<SourceRecord> {
+  const uploaded = await createSourceFromUpload(input);
+  return finalizeSourceIndexing({
+    sourceId: uploaded.id,
+    notebookId: uploaded.notebookId,
+  });
 }
 
 export async function renameSourceForUser(input: {

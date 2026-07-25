@@ -6,8 +6,10 @@ import { prisma } from "@/lib/db";
 import { createNotebookForUser } from "@/modules/notebook/service";
 import { countSourceChunks } from "@/modules/rag/index-source";
 import {
+  createIndexedSourceFromUpload,
   createSourceFromUpload,
   deleteSourceForUser,
+  finalizeSourceIndexing,
   getSourceForUser,
   listSourcesForNotebook,
   renameSourceForUser,
@@ -69,23 +71,29 @@ describe("source service", { skip: !hasDatabase || !hasOpenAI }, () => {
     });
   });
 
-  it("uploads plain text, extracts, embeds, and marks INDEXED", async () => {
-    const source = await createSourceFromUpload({
+  it("uploads plain text quickly as PROCESSING, then indexes to INDEXED", async () => {
+    const uploaded = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: makeTextFile("Transformer Notes.txt", LONG_NOTE),
     });
 
-    assert.equal(source.type, "TEXT");
-    assert.equal(source.title, "Transformer Notes");
-    assert.equal(source.originalFileName, "Transformer Notes.txt");
-    assert.equal(source.mimeType, "text/plain");
-    assert.ok(source.fileSize > 0);
-    assert.ok(source.storagePath);
-    assert.notEqual(source.storagePath, "pending");
-    assert.match(source.extractedText ?? "", /Attention is all you need/);
+    assert.equal(uploaded.type, "TEXT");
+    assert.equal(uploaded.title, "Transformer Notes");
+    assert.equal(uploaded.originalFileName, "Transformer Notes.txt");
+    assert.equal(uploaded.mimeType, "text/plain");
+    assert.ok(uploaded.fileSize > 0);
+    assert.ok(uploaded.storagePath);
+    assert.notEqual(uploaded.storagePath, "pending");
+    assert.match(uploaded.extractedText ?? "", /Attention is all you need/);
+    assert.equal(uploaded.indexingStatus, "PROCESSING");
+    assert.ok(uploaded.extractedText);
+
+    const source = await finalizeSourceIndexing({
+      sourceId: uploaded.id,
+      notebookId: uploaded.notebookId,
+    });
     assert.equal(source.indexingStatus, "INDEXED");
-    assert.ok(source.extractedText);
 
     const chunkCount = await countSourceChunks(source.id);
     assert.ok(chunkCount > 0);
@@ -112,7 +120,7 @@ describe("source service", { skip: !hasDatabase || !hasOpenAI }, () => {
     const file = makeTextFile("notes.txt", LONG_NOTE);
     Object.defineProperty(file, "type", { value: "" });
 
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file,
@@ -151,7 +159,7 @@ startxref
 %%EOF`
     );
 
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: new File([pdfBytes], "Deep Learning.pdf", {
@@ -189,7 +197,7 @@ startxref
   });
 
   it("marks INDEXED after full pipeline", async () => {
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: makeTextFile("status.txt", LONG_NOTE),
@@ -215,7 +223,7 @@ startxref
   });
 
   it("renames a source", async () => {
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: makeTextFile("old.txt", LONG_NOTE),
@@ -232,7 +240,7 @@ startxref
   });
 
   it("deletes source metadata, chunks, and extracted text", async () => {
-    const source = await createSourceFromUpload({
+    const source = await createIndexedSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: makeTextFile("delete-me.txt", LONG_NOTE),
@@ -261,7 +269,7 @@ startxref
       /Notebook not found/
     );
 
-    const owned = await createSourceFromUpload({
+    const owned = await createIndexedSourceFromUpload({
       userId: userBId,
       notebookId: notebookBId,
       file: makeTextFile("b-only.txt", LONG_NOTE),

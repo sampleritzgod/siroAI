@@ -1,9 +1,13 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/db";
 import { captureException, logger } from "@/lib/logger";
 import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import { formatSourceUploadError } from "@/modules/source/constants";
-import { createSourceFromUpload } from "@/modules/source/service";
+import {
+  createSourceFromUpload,
+  finalizeSourceIndexing,
+} from "@/modules/source/service";
 
 function jsonError(
   message: string,
@@ -16,7 +20,7 @@ function jsonError(
 /**
  * POST /api/sources — upload a PDF or plain-text source for a notebook.
  * multipart/form-data: file, notebookId
- * Pipeline: store → extract → chunk → embed → INDEXED.
+ * Fast path: store → extract → PROCESSING, then after() chunk/embed → INDEXED.
  */
 export async function POST(req: Request) {
   try {
@@ -84,6 +88,21 @@ export async function POST(req: Request) {
       file,
     });
 
+    after(async () => {
+      try {
+        await finalizeSourceIndexing({
+          sourceId: source.id,
+          notebookId: source.notebookId,
+        });
+      } catch (error) {
+        await captureException(error, {
+          stage: "source_index",
+          sourceId: source.id,
+          notebookId: source.notebookId,
+        });
+      }
+    });
+
     return Response.json({
       id: source.id,
       notebookId: source.notebookId,
@@ -94,6 +113,7 @@ export async function POST(req: Request) {
       fileSize: source.fileSize,
       indexingStatus: source.indexingStatus,
       hasExtractedText: Boolean(source.extractedText),
+      indexing: "queued",
     });
   } catch (error) {
     await captureException(error, { stage: "source_upload" });
