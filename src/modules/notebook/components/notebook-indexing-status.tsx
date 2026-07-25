@@ -13,10 +13,12 @@ const STEPS = [
 
 type NotebookIndexingStatusProps = {
   sources: SourceListItem[];
+  onRefresh?: () => void;
 };
 
 export function NotebookIndexingStatus({
   sources,
+  onRefresh,
 }: NotebookIndexingStatusProps) {
   const active =
     sources.find((source) => source.indexingStatus === "PROCESSING") ??
@@ -31,7 +33,17 @@ export function NotebookIndexingStatus({
         failed
         title="Indexing failed"
         description="Something went wrong while indexing. Try adding the source again."
-      />
+      >
+        {onRefresh ? (
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="mt-4 text-sm font-medium text-[var(--accent)] hover:underline"
+          >
+            Try again
+          </button>
+        ) : null}
+      </IndexingShell>
     );
   }
 
@@ -39,6 +51,7 @@ export function NotebookIndexingStatus({
     <IndexingProgress
       key={active?.id ?? "indexing"}
       activeTitle={active?.title ?? null}
+      onRefresh={onRefresh}
     />
   );
 }
@@ -81,7 +94,13 @@ function IndexingShell({
   );
 }
 
-function IndexingProgress({ activeTitle }: { activeTitle: string | null }) {
+function IndexingProgress({
+  activeTitle,
+  onRefresh,
+}: {
+  activeTitle: string | null;
+  onRefresh?: () => void;
+}) {
   const [stepIndex, setStepIndex] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
 
@@ -150,6 +169,16 @@ function IndexingProgress({ activeTitle }: { activeTitle: string | null }) {
           );
         })}
       </ol>
+
+      {elapsedSec >= 45 && onRefresh ? (
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="mt-6 text-sm font-medium text-[var(--accent)] hover:underline"
+        >
+          Taking longer than usual — refresh status
+        </button>
+      ) : null}
     </IndexingShell>
   );
 }

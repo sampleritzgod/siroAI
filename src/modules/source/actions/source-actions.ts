@@ -16,7 +16,17 @@ export async function listNotebookSources(
   notebookId: string
 ): Promise<SourceListItem[]> {
   const user = await requireUser();
-  return listSourcesForNotebook({ userId: user.id, notebookId });
+  const sources = await listSourcesForNotebook({
+    userId: user.id,
+    notebookId,
+  });
+  // Keep the shell in sync once indexing finishes (layout can stay stale on
+  // Vercel if we only router.refresh() from the client).
+  if (sources.some((source) => source.indexingStatus === "INDEXED")) {
+    revalidatePath("/");
+    revalidatePath("/c", "layout");
+  }
+  return sources;
 }
 
 export async function listAllSources(): Promise<SourceListItem[]> {

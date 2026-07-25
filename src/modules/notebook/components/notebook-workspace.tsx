@@ -13,6 +13,7 @@ import {
   isNotebookReady,
 } from "@/modules/notebook/notebook-readiness";
 import type { NotebookListItem } from "@/modules/notebook/service";
+import { listNotebookSources } from "@/modules/source/actions/source-actions";
 import { AddSourceDialog } from "@/modules/source/components/add-source-dialog";
 import type { SourceListItem } from "@/modules/source/service";
 
@@ -40,8 +41,27 @@ export function NotebookWorkspace({
   const pathname = usePathname();
   const router = useRouter();
   const isChatRoute = pathname.startsWith("/c/");
-  const ready = useMemo(() => isNotebookReady(sources), [sources]);
-  const indexing = useMemo(() => isNotebookIndexing(sources), [sources]);
+  // Fresh poll can beat a stale RSC payload after indexing finishes.
+  const [pollNotebookId, setPollNotebookId] = useState(notebook.id);
+  const [polledSources, setPolledSources] = useState<SourceListItem[] | null>(
+    null
+  );
+  if (pollNotebookId !== notebook.id) {
+    setPollNotebookId(notebook.id);
+    setPolledSources(null);
+  }
+  // Prefer server props once they show INDEXED; otherwise use the live poll.
+  const effectiveSources = isNotebookReady(sources)
+    ? sources
+    : (polledSources ?? sources);
+  const ready = useMemo(
+    () => isNotebookReady(effectiveSources),
+    [effectiveSources]
+  );
+  const indexing = useMemo(
+    () => isNotebookIndexing(effectiveSources),
+    [effectiveSources]
+  );
   const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
   const [openingChat, setOpeningChat] = useState(false);
@@ -61,13 +81,38 @@ export function NotebookWorkspace({
     }
   }, [ready, isChatRoute, router]);
 
+  // Poll the DB directly while indexing. router.refresh() alone can leave a
+  // stale layout payload on Vercel, so the spinner never exits even after
+  // sources are INDEXED.
   useEffect(() => {
-    if (!indexing) return;
+    if (isNotebookReady(sources)) return;
+    if (!isNotebookIndexing(sources) && sources.length === 0) return;
+
+    let cancelled = false;
+
+    async function tick() {
+      try {
+        const fresh = await listNotebookSources(notebook.id);
+        if (cancelled) return;
+        setPolledSources(fresh);
+        if (isNotebookReady(fresh)) {
+          router.refresh();
+        }
+      } catch {
+        // Next tick retries.
+      }
+    }
+
+    void tick();
     const timer = window.setInterval(() => {
-      router.refresh();
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [indexing, router]);
+      void tick();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [notebook.id, sources, router]);
 
   useEffect(() => {
     resumeAttempt.current = null;
@@ -120,7 +165,13 @@ export function NotebookWorkspace({
   ]);
 
   const setupContent = indexing ? (
-    <NotebookIndexingStatus sources={sources} />
+    <NotebookIndexingStatus
+      sources={effectiveSources}
+      onRefresh={() => {
+        setPolledSources(null);
+        router.refresh();
+      }}
+    />
   ) : (
     <NotebookOnboarding onAddSource={() => setAddSourceOpen(true)} />
   );
@@ -171,7 +222,7 @@ export function NotebookWorkspace({
     <SourcesPanel
       notebook={notebook}
       notebooks={notebooks}
-      sources={sources}
+      sources={effectiveSources}
       conversations={conversations}
       onSelectNotebook={onSelectNotebook}
       onNotebookDeleted={onNotebookDeleted}

@@ -174,27 +174,23 @@ export function SourcesPanel({
                   <button
                     type="button"
                     onClick={() => onSelectNotebook(item.id)}
-                    disabled={isIndexing}
                     className={cn(
                       "min-w-0 flex-1 truncate px-2 py-2.5 text-left text-sm",
                       active
                         ? "font-medium text-[var(--foreground)]"
-                        : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]",
-                      isIndexing && "disabled:opacity-100"
+                        : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]"
                     )}
                   >
                     {item.title}
                   </button>
-                  {!isIndexing ? (
-                    <button
-                      type="button"
-                      aria-label={`Options for ${item.title}`}
-                      onClick={() => setNotebookActions(item)}
-                      className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
-                    >
-                      ···
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={`Options for ${item.title}`}
+                    onClick={() => setNotebookActions(item)}
+                    className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
+                  >
+                    ···
+                  </button>
                 </div>
               </li>
             );
