@@ -98,22 +98,19 @@ export function NotebookSidebar({
           >
             SiroAI
           </Link>
-          <div className="flex items-center gap-1">
-            <UserButton />
-            <button
-              type="button"
-              aria-label="Close sidebar"
-              onClick={() => setOpen(false)}
-              className="inline-flex size-8 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface)] md:hidden"
-            >
-              ✕
-            </button>
-          </div>
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            onClick={() => setOpen(false)}
+            className="inline-flex size-8 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface)] md:hidden"
+          >
+            ✕
+          </button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-3 px-2 pb-3">
-          <div className="flex flex-col gap-1">
-            <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+        <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-1">
+            <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
               Notebooks
             </p>
 
@@ -237,44 +234,16 @@ export function NotebookSidebar({
             <button
               type="button"
               onClick={onRequestCreateNotebook}
-              className="mx-1 mt-1 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--surface)]"
+              className="mx-1 mt-2 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--surface)]"
             >
               + New Notebook
             </button>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 border-t border-[var(--border)] px-3 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <ThemeToggle />
-            <span className="text-[11px] text-[var(--muted)]">Settings</span>
-          </div>
-          <div className="flex gap-2">
-            <Link
-              href="/consensus"
-              onClick={close}
-              className={cn(
-                "flex-1 rounded-lg border px-2 py-1.5 text-center text-[11px] font-medium transition",
-                pathname === "/consensus"
-                  ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
-                  : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Consensus
-            </Link>
-            <Link
-              href="/usage"
-              onClick={close}
-              className={cn(
-                "flex-1 rounded-lg border px-2 py-1.5 text-center text-[11px] font-medium transition",
-                pathname === "/usage"
-                  ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]"
-                  : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Usage
-            </Link>
-          </div>
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] px-3 py-3">
+          <UserButton />
+          <ThemeToggle />
         </div>
       </aside>
 
@@ -400,9 +369,9 @@ export function NotebookAppShell({
   );
 
   const showEmptyLibrary = notebooks.length === 0 && pathname === "/";
-  const isWorkspaceRoute = pathname === "/" || pathname.startsWith("/c/");
-  const showDashboard = Boolean(activeNotebook) && isWorkspaceRoute;
   const isChatRoute = pathname.startsWith("/c/");
+  const isWorkspaceRoute = pathname === "/" || isChatRoute;
+  const showDashboard = Boolean(activeNotebook) && isWorkspaceRoute;
 
   return (
     <>
@@ -426,10 +395,11 @@ export function NotebookAppShell({
             {showDashboard && activeNotebook ? (
               <section
                 className={cn(
-                  "min-h-0 min-w-0 flex-col border-[var(--border)] bg-[var(--background)]",
-                  // Mobile: dashboard on home, chat-only on conversation routes
-                  isChatRoute ? "hidden lg:flex" : "flex",
-                  "w-full lg:w-[min(28rem,42%)] lg:shrink-0 lg:border-r"
+                  "min-h-0 min-w-0 flex-col bg-[var(--background)]",
+                  // Notebook is the primary workspace; chat only appears when open.
+                  isChatRoute
+                    ? "hidden border-[var(--border)] lg:flex lg:w-[min(28rem,40%)] lg:shrink-0 lg:border-r"
+                    : "flex w-full"
                 )}
                 aria-label="Notebook dashboard"
               >
@@ -458,16 +428,14 @@ export function NotebookAppShell({
               </section>
             ) : null}
 
-            <section
-              className={cn(
-                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                // Mobile: hide the home empty pane while dashboard is the focus
-                showDashboard && !isChatRoute && "hidden lg:flex"
-              )}
-              aria-label={isChatRoute ? "Chat" : "Workspace"}
-            >
-              {children}
-            </section>
+            {isChatRoute || !showDashboard ? (
+              <section
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                aria-label={isChatRoute ? "Chat" : "Workspace"}
+              >
+                {children}
+              </section>
+            ) : null}
           </>
         )}
       </main>

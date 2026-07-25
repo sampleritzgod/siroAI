@@ -71,6 +71,7 @@ export default async function ConversationPage({
     <ConversationView
       key={`${conversation.id}:${branchId}`}
       conversationId={conversation.id}
+      notebookId={conversation.notebookId}
       branchId={branchId}
       title={conversation.title}
       initialMessages={initialMessages}

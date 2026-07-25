@@ -10,7 +10,10 @@ import {
   createBranchFromMessage,
   type BranchListItem,
 } from "@/modules/conversation/actions/branch-actions";
-import { updateConversation } from "@/modules/conversation/actions/conversation-actions";
+import {
+  startNewChat,
+  updateConversation,
+} from "@/modules/conversation/actions/conversation-actions";
 import type { ShareState } from "@/modules/conversation/actions/share-actions";
 import { MobileNavButton } from "@/components/mobile-nav-button";
 import { BranchSwitcher } from "@/modules/conversation/components/branch-switcher";
@@ -32,6 +35,7 @@ type PendingEdit = {
 
 type ConversationViewProps = {
   conversationId: string;
+  notebookId: string;
   branchId: string;
   title: string;
   initialMessages: UIMessage[];
@@ -59,6 +63,7 @@ function readPendingEdit(): PendingEdit | null {
 
 export function ConversationView({
   conversationId,
+  notebookId,
   branchId,
   title,
   initialMessages,
@@ -268,6 +273,15 @@ export function ConversationView({
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
           {title}
         </h1>
+        <form action={startNewChat}>
+          <input type="hidden" name="notebookId" value={notebookId} />
+          <button
+            type="submit"
+            className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium transition hover:bg-[var(--surface)] sm:text-sm"
+          >
+            New Chat
+          </button>
+        </form>
         <ShareControls
           conversationId={conversationId}
           initialShare={initialShare}
@@ -281,16 +295,12 @@ export function ConversationView({
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {messages.length === 0 && !isThinking ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center sm:px-6">
-            <p className="text-sm uppercase tracking-[0.2em] text-[var(--muted)]">
-              SiroAI
-            </p>
-            <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">
-              Start the conversation
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center sm:px-6">
+            <h2 className="text-lg font-semibold tracking-tight sm:text-xl">
+              Ask about this notebook
             </h2>
-            <p className="max-w-md text-sm text-[var(--muted)]">
-              Attach images or PDFs, switch models, search the web, or branch
-              from any reply.
+            <p className="max-w-sm text-sm text-[var(--muted)]">
+              Questions stay inside this notebook and can use its sources.
             </p>
           </div>
         ) : (

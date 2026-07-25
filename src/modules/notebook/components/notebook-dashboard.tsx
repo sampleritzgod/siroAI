@@ -186,9 +186,9 @@ export function NotebookDashboard({
         </span>
       </header>
 
-      <div className="flex flex-col gap-4 p-4 sm:p-5">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-5 py-6 sm:px-8 sm:py-8">
         {/* Section 1 — Notebook header */}
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+        <section>
           {renaming ? (
             <form
               onSubmit={(event) => {
@@ -211,29 +211,29 @@ export function NotebookDashboard({
                 onKeyDown={(event) => {
                   if (event.key === "Escape") setRenaming(false);
                 }}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-lg font-semibold outline-none"
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-2xl font-semibold outline-none"
               />
             </form>
           ) : (
-            <h2 className="text-xl font-semibold tracking-tight">
+            <h2 className="text-2xl font-semibold tracking-tight">
               {notebook.title}
             </h2>
           )}
 
-          <p className="mt-1 text-sm text-[var(--muted)]">
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--muted)]">
             {notebook.description?.trim() || "No description yet"}
           </p>
 
-          <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
+          <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--muted)]">
             <div>
               <dt className="inline">Created </dt>
-              <dd className="inline font-medium text-[var(--foreground)]/80">
+              <dd className="inline text-[var(--foreground)]/70">
                 {formatDate(notebook.createdAt)}
               </dd>
             </div>
             <div>
               <dt className="inline">Updated </dt>
-              <dd className="inline font-medium text-[var(--foreground)]/80">
+              <dd className="inline text-[var(--foreground)]/70">
                 {formatDate(notebook.updatedAt)}
               </dd>
             </div>
@@ -268,92 +268,118 @@ export function NotebookDashboard({
         </section>
 
         {/* Section 2 — Sources */}
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-center justify-between gap-2">
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
             <h3 className="text-sm font-semibold tracking-tight">Sources</h3>
-            <button
-              type="button"
-              onClick={() => setViewAllSourcesOpen(true)}
-              className="text-xs font-medium text-[var(--accent)] hover:underline"
-            >
-              View All Sources
-            </button>
+            {sources.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setViewAllSourcesOpen(true)}
+                className="text-xs font-medium text-[var(--accent)] hover:underline"
+              >
+                View All
+              </button>
+            ) : null}
           </div>
 
-          {recentSources.length === 0 ? (
-            <div className="mt-3 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
-              No sources yet
+          {sources.length === 0 ? (
+            <div className="mt-4 rounded-xl border border-dashed border-[var(--border)] px-5 py-8 text-center">
+              <p className="text-sm text-[var(--foreground)]/80">
+                This notebook doesn&apos;t have any sources yet.
+              </p>
+              <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => setAddSourceOpen(true)}
+                  className="rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+                >
+                  Add Source
+                </button>
+                <form action={startNewChat}>
+                  <input type="hidden" name="notebookId" value={notebook.id} />
+                  <button
+                    type="submit"
+                    disabled={isPending}
+                    className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm font-medium transition hover:bg-[var(--background)] disabled:opacity-50"
+                  >
+                    Start Empty Chat
+                  </button>
+                </form>
+              </div>
             </div>
           ) : (
-            <ul className="mt-3 flex flex-col gap-1">
-              {recentSources.map((source) => (
-                <li key={source.id}>
-                  <button
-                    type="button"
-                    onClick={() => setMetadataSource(source)}
-                    className="flex w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-[var(--background)]"
-                  >
-                    <span
-                      className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm"
-                      aria-hidden="true"
+            <>
+              <ul className="mt-4 flex flex-col gap-1">
+                {recentSources.map((source) => (
+                  <li key={source.id}>
+                    <button
+                      type="button"
+                      onClick={() => setMetadataSource(source)}
+                      className="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition hover:bg-[var(--surface)]"
                     >
-                      {source.type === "PDF" ? "📄" : "📝"}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">
-                        {source.title}
+                      <span
+                        className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                        aria-hidden="true"
+                      >
+                        {source.type === "PDF" ? "📄" : "📝"}
                       </span>
-                      <span className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-[var(--muted)]">
-                        <span>{source.type}</span>
-                        <span
-                          className={cn(
-                            source.indexingStatus === "FAILED" &&
-                              "text-red-600",
-                            source.indexingStatus === "PROCESSING" &&
-                              "text-[var(--accent)]"
-                          )}
-                        >
-                          {formatIndexingStatus(source.indexingStatus)}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {source.title}
                         </span>
-                        <span>{formatDate(source.createdAt)}</span>
+                        <span className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-[var(--muted)]">
+                          <span>{source.type}</span>
+                          <span
+                            className={cn(
+                              source.indexingStatus === "FAILED" &&
+                                "text-red-600",
+                              source.indexingStatus === "PROCESSING" &&
+                                "text-[var(--accent)]"
+                            )}
+                          >
+                            {formatIndexingStatus(source.indexingStatus)}
+                          </span>
+                          <span>{formatDate(source.createdAt)}</span>
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                onClick={() => setAddSourceOpen(true)}
+                className="mt-3 text-sm font-medium text-[var(--accent)] hover:underline"
+              >
+                + Add Source
+              </button>
+            </>
           )}
-
-          <button
-            type="button"
-            onClick={() => setAddSourceOpen(true)}
-            className="mt-3 w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-sm font-medium transition hover:bg-[var(--background)]"
-          >
-            + Add Source
-          </button>
         </section>
 
         {/* Section 3 — Recent conversations */}
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-center justify-between gap-2">
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
             <h3 className="text-sm font-semibold tracking-tight">
               Recent Conversations
             </h3>
-            <button
-              type="button"
-              onClick={() => setViewAllChatsOpen(true)}
-              className="text-xs font-medium text-[var(--accent)] hover:underline"
-            >
-              View All
-            </button>
+            {conversations.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setViewAllChatsOpen(true)}
+                className="text-xs font-medium text-[var(--accent)] hover:underline"
+              >
+                View All
+              </button>
+            ) : null}
           </div>
 
           {recentConversations.length === 0 ? (
-            <div className="mt-3 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
-              No conversations yet
-            </div>
+            <p className="mt-4 text-sm text-[var(--muted)]">
+              No conversations in this notebook yet.
+            </p>
           ) : (
-            <ul className="mt-3 flex flex-col gap-1">
+            <ul className="mt-4 flex flex-col gap-1">
               {recentConversations.map((conversation) => {
                 const active = pathname === `/c/${conversation.id}`;
                 return (
@@ -361,8 +387,8 @@ export function NotebookDashboard({
                     <Link
                       href={`/c/${conversation.id}`}
                       className={cn(
-                        "block rounded-lg px-2 py-2 transition hover:bg-[var(--background)]",
-                        active && "bg-[var(--background)] ring-1 ring-[var(--border)]"
+                        "block rounded-lg px-2 py-2.5 transition hover:bg-[var(--surface)]",
+                        active && "bg-[var(--surface)]"
                       )}
                     >
                       <p className="truncate text-sm font-medium">
@@ -382,20 +408,22 @@ export function NotebookDashboard({
             </ul>
           )}
 
-          <form action={startNewChat} className="mt-3">
-            <input type="hidden" name="notebookId" value={notebook.id} />
-            <button
-              type="submit"
-              disabled={isPending}
-              className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-            >
-              New Chat
-            </button>
-          </form>
+          {sources.length > 0 ? (
+            <form action={startNewChat} className="mt-4">
+              <input type="hidden" name="notebookId" value={notebook.id} />
+              <button
+                type="submit"
+                disabled={isPending}
+                className="rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                New Chat
+              </button>
+            </form>
+          ) : null}
         </section>
 
         {/* Section 4 — Statistics */}
-        <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Sources" value={String(stats.sources)} />
           <StatCard label="Conversations" value={String(stats.conversations)} />
           <StatCard
@@ -406,32 +434,31 @@ export function NotebookDashboard({
         </section>
 
         {/* Section 5 — Suggested questions */}
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <h3 className="text-sm font-semibold tracking-tight">
-            Suggested Questions
-          </h3>
-          <p className="mt-1 text-xs text-[var(--muted)]">
-            Starter prompts for this notebook
-          </p>
-          <div className="mt-3 flex flex-col gap-2">
-            {SUGGESTED_QUESTIONS.map((question) => (
-              <button
-                key={question}
-                type="button"
-                disabled={isPending}
-                onClick={() => startSuggestedQuestion(question)}
-                className="rounded-lg border border-[var(--border)] px-3 py-2.5 text-left text-sm transition hover:border-[var(--accent)]/40 hover:bg-[var(--background)] disabled:opacity-50"
-              >
-                {question}
-              </button>
-            ))}
-          </div>
-          {starterError ? (
-            <p className="mt-2 text-xs text-red-600" role="alert">
-              {starterError}
-            </p>
-          ) : null}
-        </section>
+        {sources.length > 0 ? (
+          <section>
+            <h3 className="text-sm font-semibold tracking-tight">
+              Suggested Questions
+            </h3>
+            <div className="mt-4 flex flex-col gap-2">
+              {SUGGESTED_QUESTIONS.map((question) => (
+                <button
+                  key={question}
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => startSuggestedQuestion(question)}
+                  className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-left text-sm transition hover:bg-[var(--background)] disabled:opacity-50"
+                >
+                  {question}
+                </button>
+              ))}
+            </div>
+            {starterError ? (
+              <p className="mt-2 text-xs text-red-600" role="alert">
+                {starterError}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
       </div>
 
       <DeleteNotebookDialog
@@ -485,11 +512,9 @@ export function NotebookDashboard({
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-        {label}
-      </p>
-      <p className="mt-1 truncate text-lg font-semibold tracking-tight">
+    <div className="rounded-lg border border-[var(--border)]/80 px-3 py-3">
+      <p className="text-[11px] text-[var(--muted)]">{label}</p>
+      <p className="mt-1 truncate text-base font-semibold tracking-tight">
         {value}
       </p>
     </div>
