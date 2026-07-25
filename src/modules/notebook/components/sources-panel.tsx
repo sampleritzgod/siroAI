@@ -46,17 +46,21 @@ export function SourcesPanel({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
-  const [renamingNotebookId, setRenamingNotebookId] = useState<string | null>(
+  const [notebookActions, setNotebookActions] =
+    useState<NotebookListItem | null>(null);
+  const [renameNotebook, setRenameNotebook] = useState<NotebookListItem | null>(
     null
   );
-  const [notebookTitle, setNotebookTitle] = useState(notebook.title);
-  const [notebookMenuId, setNotebookMenuId] = useState<string | null>(null);
+  const [notebookTitle, setNotebookTitle] = useState("");
   const [deleteNotebook, setDeleteNotebook] = useState<NotebookListItem | null>(
     null
   );
   const [addOpen, setAddOpen] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [sourceActions, setSourceActions] = useState<SourceListItem | null>(
+    null
+  );
+  const [renameSourceItem, setRenameSourceItem] =
+    useState<SourceListItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [metadataSource, setMetadataSource] = useState<SourceListItem | null>(
     null
@@ -67,12 +71,6 @@ export function SourcesPanel({
     []
   );
   const [showHidden, setShowHidden] = useState(false);
-
-  useEffect(() => {
-    if (renamingNotebookId === notebook.id) {
-      setNotebookTitle(notebook.title);
-    }
-  }, [notebook.id, notebook.title, renamingNotebookId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,98 +152,40 @@ export function SourcesPanel({
         <ul className="flex flex-col gap-0.5">
           {notebooks.map((item) => {
             const active = item.id === notebook.id;
-            const renaming = renamingNotebookId === item.id;
-
             return (
-              <li key={item.id} className="relative">
-                {renaming ? (
-                  <form
-                    className="px-1"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      run(async () => {
-                        await updateNotebook({
-                          id: item.id,
-                          title: notebookTitle,
-                        });
-                        setRenamingNotebookId(null);
-                      });
-                    }}
-                  >
-                    <input
-                      autoFocus
-                      value={notebookTitle}
-                      maxLength={100}
-                      onChange={(event) => setNotebookTitle(event.target.value)}
-                      onBlur={() => setRenamingNotebookId(null)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") {
-                          setRenamingNotebookId(null);
-                        }
-                      }}
-                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm outline-none"
-                    />
-                  </form>
-                ) : (
-                  <div
+              <li key={item.id}>
+                <div
+                  className={cn(
+                    "flex items-center rounded-lg",
+                    active && "bg-[var(--surface)]"
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSelectNotebook(item.id)}
                     className={cn(
-                      "group flex items-center rounded-lg",
-                      active && "bg-[var(--surface)]"
+                      "min-w-0 flex-1 truncate px-2 py-2.5 text-left text-sm",
+                      active
+                        ? "font-medium text-[var(--foreground)]"
+                        : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]"
                     )}
                   >
-                    <button
-                      type="button"
-                      onClick={() => onSelectNotebook(item.id)}
-                      className={cn(
-                        "min-w-0 flex-1 truncate px-2 py-2 text-left text-sm",
-                        active
-                          ? "font-medium text-[var(--foreground)]"
-                          : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]"
-                      )}
-                    >
-                      {item.title}
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Notebook menu for ${item.title}`}
-                      onClick={() =>
-                        setNotebookMenuId(
-                          notebookMenuId === item.id ? null : item.id
-                        )
-                      }
-                      className="mr-0.5 rounded px-1.5 py-1 text-[var(--muted)] opacity-100 transition hover:bg-[var(--border)]/40 md:opacity-0 md:group-hover:opacity-100"
-                    >
-                      ···
-                    </button>
-                  </div>
-                )}
-
-                {notebookMenuId === item.id ? (
-                  <div className="absolute right-1 top-9 z-20 w-40 rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg">
-                    <MenuButton
-                      onClick={() => {
-                        setNotebookTitle(item.title);
-                        setRenamingNotebookId(item.id);
-                        setNotebookMenuId(null);
-                      }}
-                    >
-                      Rename
-                    </MenuButton>
-                    <MenuButton
-                      danger
-                      onClick={() => {
-                        setDeleteNotebook(item);
-                        setNotebookMenuId(null);
-                      }}
-                    >
-                      Hide
-                    </MenuButton>
-                  </div>
-                ) : null}
+                    {item.title}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Options for ${item.title}`}
+                    onClick={() => setNotebookActions(item)}
+                    className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
+                  >
+                    ···
+                  </button>
+                </div>
               </li>
             );
           })}
         </ul>
+
         {createError ? (
           <p className="px-2 pt-2 text-[11px] text-red-600" role="alert">
             {createError}
@@ -319,133 +259,49 @@ export function SourcesPanel({
         {filteredSources.length === 0 ? (
           <div className="mx-1 mb-3 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
             {sources.length === 0
-              ? "No sources yet"
+              ? "No sources yet — only this notebook"
               : "No sources match your search"}
           </div>
         ) : (
           <ul className="mb-4 flex flex-col gap-0.5">
-            {filteredSources.map((source) => {
-              const renaming = renamingId === source.id;
-              return (
-                <li key={source.id} className="relative">
-                  {renaming ? (
-                    <form
-                      className="px-1"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        run(async () => {
-                          await renameSource({
-                            id: source.id,
-                            title: renameValue,
-                          });
-                          setRenamingId(null);
-                        });
-                      }}
+            {filteredSources.map((source) => (
+              <li key={source.id}>
+                <div className="flex items-start rounded-lg px-1 py-1.5 hover:bg-[var(--surface)]">
+                  <button
+                    type="button"
+                    onClick={() => setMetadataSource(source)}
+                    className="min-w-0 flex-1 px-1 text-left"
+                  >
+                    <p className="truncate text-sm text-[var(--foreground)]">
+                      <span aria-hidden="true">
+                        {source.type === "PDF" ? "📄 " : "📝 "}
+                      </span>
+                      {source.title}
+                    </p>
+                    <p
+                      className={cn(
+                        "truncate text-[11px]",
+                        source.indexingStatus === "FAILED"
+                          ? "text-red-600"
+                          : source.indexingStatus === "PROCESSING"
+                            ? "text-[var(--accent)]"
+                            : "text-[var(--muted)]"
+                      )}
                     >
-                      <input
-                        autoFocus
-                        value={renameValue}
-                        maxLength={SOURCE_TITLE_MAX_LENGTH}
-                        onChange={(event) => setRenameValue(event.target.value)}
-                        onBlur={() => setRenamingId(null)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") setRenamingId(null);
-                        }}
-                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm outline-none"
-                      />
-                    </form>
-                  ) : (
-                    <div className="group flex items-start rounded-lg px-1 py-1.5 hover:bg-[var(--surface)]">
-                      <button
-                        type="button"
-                        onClick={() => setMetadataSource(source)}
-                        className="min-w-0 flex-1 px-1 text-left"
-                      >
-                        <p className="truncate text-sm text-[var(--foreground)]">
-                          <span aria-hidden="true">
-                            {source.type === "PDF" ? "📄 " : "📝 "}
-                          </span>
-                          {source.title}
-                        </p>
-                        <p
-                          className={cn(
-                            "truncate text-[11px]",
-                            source.indexingStatus === "FAILED"
-                              ? "text-red-600"
-                              : source.indexingStatus === "PROCESSING"
-                                ? "text-[var(--accent)]"
-                                : "text-[var(--muted)]"
-                          )}
-                        >
-                          {formatIndexingStatus(source.indexingStatus)}
-                        </p>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Source menu for ${source.title}`}
-                        onClick={() =>
-                          setMenuOpenId(
-                            menuOpenId === source.id ? null : source.id
-                          )
-                        }
-                        className="mr-0.5 rounded px-1.5 py-1 text-[var(--muted)] opacity-100 transition hover:bg-[var(--border)]/40 md:opacity-0 md:group-hover:opacity-100"
-                      >
-                        ···
-                      </button>
-                    </div>
-                  )}
-
-                  {menuOpenId === source.id ? (
-                    <div className="absolute right-1 top-9 z-20 w-40 rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg">
-                      <MenuButton
-                        onClick={() => {
-                          setMetadataSource(source);
-                          setMenuOpenId(null);
-                        }}
-                      >
-                        View metadata
-                      </MenuButton>
-                      <MenuButton
-                        onClick={() => {
-                          setRenamingId(source.id);
-                          setRenameValue(source.title);
-                          setMenuOpenId(null);
-                        }}
-                      >
-                        Rename
-                      </MenuButton>
-                      <MenuButton
-                        danger
-                        onClick={() => {
-                          setMenuOpenId(null);
-                          if (
-                            !window.confirm(
-                              `Delete “${source.title}”? The file and extracted text will be removed.`
-                            )
-                          ) {
-                            return;
-                          }
-                          setDeleteError(null);
-                          run(async () => {
-                            try {
-                              await deleteSource(source.id);
-                            } catch (error) {
-                              setDeleteError(
-                                error instanceof Error
-                                  ? error.message
-                                  : "Could not delete source"
-                              );
-                            }
-                          });
-                        }}
-                      >
-                        Delete
-                      </MenuButton>
-                    </div>
-                  ) : null}
-                </li>
-              );
-            })}
+                      {formatIndexingStatus(source.indexingStatus)}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Options for ${source.title}`}
+                    onClick={() => setSourceActions(source)}
+                    className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
+                  >
+                    ···
+                  </button>
+                </div>
+              </li>
+            ))}
           </ul>
         )}
 
@@ -491,6 +347,115 @@ export function SourcesPanel({
         <ThemeToggle />
       </div>
 
+      <ActionSheet
+        open={Boolean(notebookActions)}
+        title={notebookActions?.title ?? "Notebook"}
+        onClose={() => setNotebookActions(null)}
+        actions={[
+          {
+            label: "Rename",
+            onClick: () => {
+              if (!notebookActions) return;
+              setNotebookTitle(notebookActions.title);
+              setRenameNotebook(notebookActions);
+              setNotebookActions(null);
+            },
+          },
+          {
+            label: "Delete",
+            danger: true,
+            onClick: () => {
+              if (!notebookActions) return;
+              setDeleteNotebook(notebookActions);
+              setNotebookActions(null);
+            },
+          },
+        ]}
+      />
+
+      <ActionSheet
+        open={Boolean(sourceActions)}
+        title={sourceActions?.title ?? "Source"}
+        onClose={() => setSourceActions(null)}
+        actions={[
+          {
+            label: "Rename",
+            onClick: () => {
+              if (!sourceActions) return;
+              setRenameValue(sourceActions.title);
+              setRenameSourceItem(sourceActions);
+              setSourceActions(null);
+            },
+          },
+          {
+            label: "Delete",
+            danger: true,
+            onClick: () => {
+              if (!sourceActions) return;
+              const target = sourceActions;
+              setSourceActions(null);
+              if (
+                !window.confirm(
+                  `Delete “${target.title}”? The file will be removed from this notebook only.`
+                )
+              ) {
+                return;
+              }
+              setDeleteError(null);
+              run(async () => {
+                try {
+                  await deleteSource(target.id);
+                } catch (error) {
+                  setDeleteError(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not delete source"
+                  );
+                }
+              });
+            },
+          },
+        ]}
+      />
+
+      <RenameDialog
+        open={Boolean(renameNotebook)}
+        label="Rename notebook"
+        value={notebookTitle}
+        maxLength={100}
+        onChange={setNotebookTitle}
+        onClose={() => setRenameNotebook(null)}
+        onSave={() => {
+          if (!renameNotebook) return;
+          run(async () => {
+            await updateNotebook({
+              id: renameNotebook.id,
+              title: notebookTitle,
+            });
+            setRenameNotebook(null);
+          });
+        }}
+      />
+
+      <RenameDialog
+        open={Boolean(renameSourceItem)}
+        label="Rename source"
+        value={renameValue}
+        maxLength={SOURCE_TITLE_MAX_LENGTH}
+        onChange={setRenameValue}
+        onClose={() => setRenameSourceItem(null)}
+        onSave={() => {
+          if (!renameSourceItem) return;
+          run(async () => {
+            await renameSource({
+              id: renameSourceItem.id,
+              title: renameValue,
+            });
+            setRenameSourceItem(null);
+          });
+        }}
+      />
+
       <AddSourceDialog
         open={addOpen}
         notebookId={notebook.id}
@@ -518,25 +483,140 @@ export function SourcesPanel({
   );
 }
 
-function MenuButton({
-  children,
-  onClick,
-  danger,
+function ActionSheet({
+  open,
+  title,
+  actions,
+  onClose,
 }: {
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
+  open: boolean;
+  title: string;
+  actions: Array<{ label: string; onClick: () => void; danger?: boolean }>;
+  onClose: () => void;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "block w-full px-3 py-2 text-left text-sm hover:bg-[var(--sidebar)] sm:py-1.5",
-        danger && "text-red-600"
-      )}
-    >
-      {children}
-    </button>
+    <div className="fixed inset-0 z-[70] flex items-end justify-center p-3 sm:items-center">
+      <button
+        type="button"
+        aria-label="Close"
+        className="absolute inset-0 bg-black/40"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative z-[71] w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-2 shadow-xl"
+      >
+        <p className="truncate px-3 py-2 text-xs font-medium text-[var(--muted)]">
+          {title}
+        </p>
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            onClick={action.onClick}
+            className={cn(
+              "block w-full rounded-xl px-3 py-3.5 text-left text-base hover:bg-[var(--sidebar)] sm:py-3 sm:text-sm",
+              action.danger && "text-red-600"
+            )}
+          >
+            {action.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-1 block w-full rounded-xl px-3 py-3.5 text-left text-base text-[var(--muted)] hover:bg-[var(--sidebar)] sm:py-3 sm:text-sm"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RenameDialog({
+  open,
+  label,
+  value,
+  maxLength,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  label: string;
+  value: string;
+  maxLength: number;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Close"
+        className="absolute inset-0 bg-black/40"
+        onClick={onClose}
+      />
+      <form
+        role="dialog"
+        aria-modal="true"
+        className="relative z-[71] w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!value.trim()) return;
+          onSave();
+        }}
+      >
+        <h2 className="text-base font-semibold tracking-tight">{label}</h2>
+        <input
+          autoFocus
+          value={value}
+          maxLength={maxLength}
+          onChange={(event) => onChange(event.target.value)}
+          className="mt-3 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--sidebar)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!value.trim()}
+            className="rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

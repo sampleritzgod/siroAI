@@ -100,7 +100,7 @@ function DeleteNotebookDialogForm({
         className="relative z-[61] w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl"
       >
         <h2 id={titleId} className="text-lg font-semibold tracking-tight">
-          Hide notebook?
+          Delete notebook?
         </h2>
 
         {isOnlyNotebook ? (
@@ -111,8 +111,8 @@ function DeleteNotebookDialogForm({
         ) : (
           <div className="mt-2 space-y-3 text-sm text-[var(--muted)]">
             <p>
-              This hides &ldquo;{notebookTitle}&rdquo; from the sidebar. Sources
-              and chat history are kept and can be restored later.
+              Remove &ldquo;{notebookTitle}&rdquo; from the sidebar. Sources and
+              chat history stay saved and can be restored from Hidden notebooks.
             </p>
             <label className="flex flex-col gap-1.5 text-[var(--foreground)]">
               <span>
@@ -151,7 +151,7 @@ function DeleteNotebookDialogForm({
             disabled={isPending || isOnlyNotebook || !confirmed}
             className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
-            {isPending ? "Hiding…" : "Hide notebook"}
+            {isPending ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>
