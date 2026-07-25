@@ -78,7 +78,8 @@ describe("source service", { skip: !hasDatabase }, () => {
     assert.ok(source.storagePath);
     assert.notEqual(source.storagePath, "pending");
     assert.match(source.extractedText ?? "", /Attention is all you need/);
-    assert.equal(source.indexingStatus, "INDEXED");
+    assert.equal(source.indexingStatus, "PENDING");
+    assert.ok(source.extractedText);
 
     const listed = await listSourcesForNotebook({
       userId: userAId,
@@ -92,7 +93,24 @@ describe("source service", { skip: !hasDatabase }, () => {
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
   });
 
-  it("uploads a PDF and marks it indexed after text extraction", async () => {
+  it("uploads a text file when browser MIME type is empty", async () => {
+    const file = makeTextFile("notes.txt", "Hello from empty mime");
+    Object.defineProperty(file, "type", { value: "" });
+
+    const source = await createSourceFromUpload({
+      userId: userAId,
+      notebookId: notebookAId,
+      file,
+    });
+
+    assert.equal(source.mimeType, "text/plain");
+    assert.equal(source.indexingStatus, "PENDING");
+    assert.match(source.extractedText ?? "", /Hello from empty mime/);
+
+    await deleteSourceForUser({ userId: userAId, sourceId: source.id });
+  });
+
+  it("uploads a PDF and extracts text after storage", async () => {
     // Minimal PDF with extractable text (Hello).
     const pdfBytes = Buffer.from(
       `%PDF-1.1
@@ -132,9 +150,10 @@ startxref
     assert.equal(source.mimeType, "application/pdf");
     assert.ok(source.storagePath);
     assert.notEqual(source.storagePath, "pending");
-    assert.equal(source.indexingStatus, "INDEXED");
+    assert.equal(source.indexingStatus, "PENDING");
+    assert.ok(source.extractedText);
 
-    // Notebook source indexing does not write chat DocumentChunk rows.
+    // Notebook source upload does not write chat DocumentChunk rows.
     const chunks = await prisma.documentChunk.count({
       where: { attachmentId: source.id },
     });
@@ -159,17 +178,30 @@ startxref
     );
   });
 
-  it("updates status through processing then indexed after extract", async () => {
+  it("updates status through processing then pending after extract", async () => {
     const source = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: makeTextFile("status.txt", "hello status"),
     });
 
-    assert.equal(source.indexingStatus, "INDEXED");
+    assert.equal(source.indexingStatus, "PENDING");
     assert.ok(source.extractedText);
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
+  });
+
+  it("rejects empty files", async () => {
+    const empty = new File([], "empty.txt", { type: "text/plain" });
+    await assert.rejects(
+      () =>
+        createSourceFromUpload({
+          userId: userAId,
+          notebookId: notebookAId,
+          file: empty,
+        }),
+      /empty/i
+    );
   });
 
   it("renames a source", async () => {

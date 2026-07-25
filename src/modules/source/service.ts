@@ -3,6 +3,7 @@ import type {
   SourceType,
 } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { extractAttachmentContent } from "@/modules/files/extract-text";
 import {
   deleteStoredUpload,
@@ -12,8 +13,9 @@ import {
   MAX_UPLOAD_BYTES,
   SOURCE_TITLE_MAX_LENGTH,
   defaultTitleFromFilename,
+  formatSourceUploadError,
   isRemoteStoragePath,
-  isSourceAllowedMediaType,
+  resolveSourceMediaType,
   sourceTypeFromMediaType,
 } from "@/modules/source/constants";
 
@@ -160,86 +162,200 @@ export async function getSourceForUser(input: {
 }
 
 /**
- * Upload + extract a notebook source, then mark it INDEXED when text is ready.
+ * Upload + extract a notebook source.
+ * Terminal success status is PENDING with extracted text (chat-ready).
+ * Does not create embeddings.
  */
 export async function createSourceFromUpload(input: {
   userId: string;
   notebookId: string;
   file: File;
 }): Promise<SourceRecord> {
+  logger.info("[UPLOAD] start", {
+    notebookId: input.notebookId,
+    filename: input.file.name,
+    declaredType: input.file.type,
+    size: input.file.size,
+  });
+
   await assertNotebookOwner(input.notebookId, input.userId);
 
-  const mediaType = (input.file.type || "application/octet-stream").toLowerCase();
-  if (!isSourceAllowedMediaType(mediaType)) {
-    throw new Error("Unsupported file type. Only PDF and plain text are allowed.");
+  const originalFileName = input.file.name?.trim() || "upload";
+  const mediaType = resolveSourceMediaType({
+    filename: originalFileName,
+    fileType: input.file.type,
+  });
+
+  if (!mediaType) {
+    logger.warn("[UPLOAD] rejected_mime", {
+      filename: originalFileName,
+      declaredType: input.file.type,
+    });
+    throw new Error(
+      "Unsupported file type. Only PDF and plain text are allowed."
+    );
   }
 
-  if (input.file.size <= 0 || input.file.size > MAX_UPLOAD_BYTES) {
+  if (input.file.size <= 0) {
+    throw new Error("File is empty.");
+  }
+
+  if (input.file.size > MAX_UPLOAD_BYTES) {
     throw new Error(
-      `File must be between 1 byte and ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB`
+      `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
     );
   }
 
   const bytes = Buffer.from(await input.file.arrayBuffer());
-  const originalFileName = input.file.name?.trim() || "upload";
   const type = sourceTypeFromMediaType(mediaType);
   const title = defaultTitleFromFilename(originalFileName);
 
-  const pending = await prisma.source.create({
-    data: {
-      notebookId: input.notebookId,
-      type,
-      title,
-      originalFileName,
-      mimeType: mediaType,
-      fileSize: bytes.length,
-      storagePath: "pending",
-      indexingStatus: "PROCESSING",
-    },
+  logger.info("[DATABASE] create_pending", {
+    notebookId: input.notebookId,
+    type,
+    mimeType: mediaType,
+    fileSize: bytes.length,
   });
 
+  let pending;
   try {
+    pending = await prisma.source.create({
+      data: {
+        notebookId: input.notebookId,
+        type,
+        title,
+        originalFileName,
+        mimeType: mediaType,
+        fileSize: bytes.length,
+        storagePath: "pending",
+        indexingStatus: "PROCESSING",
+      },
+    });
+  } catch (error) {
+    logger.error("[DATABASE] create_failed", {
+      error: formatSourceUploadError(error),
+    });
+    throw new Error("Database error");
+  }
+
+  let storedKey: string | null = null;
+  let storedRemote = false;
+
+  try {
+    logger.info("[STORE] begin", { sourceId: pending.id });
     const stored = await storeUpload({
       attachmentId: pending.id,
       filename: originalFileName,
       mediaType,
       bytes,
     });
-
-    const extracted = await extractAttachmentContent({
-      attachmentId: pending.id,
-      filename: originalFileName,
-      mediaType,
-      bytes,
+    storedKey = stored.storageKey;
+    storedRemote = stored.storage === "VERCEL_BLOB";
+    logger.info("[STORE] complete", {
+      sourceId: pending.id,
+      storage: stored.storage,
+      storageKey: stored.storageKey,
     });
 
-    const extractedText = extracted.extractedText?.trim() ?? "";
-    if (!extractedText) {
-      return prisma.source.update({
-        where: { id: pending.id },
-        data: {
-          storagePath: stored.storageKey,
-          extractedText: null,
-          indexingStatus: "FAILED",
-        },
+    logger.info("[EXTRACT] begin", {
+      sourceId: pending.id,
+      mimeType: mediaType,
+    });
+
+    let extractedText: string | null = null;
+    try {
+      const extracted = await extractAttachmentContent({
+        attachmentId: pending.id,
+        filename: originalFileName,
+        mediaType,
+        bytes,
       });
+      extractedText = extracted.extractedText?.trim() || null;
+    } catch (error) {
+      logger.error("[EXTRACT] failed", {
+        sourceId: pending.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (mediaType === "application/pdf") {
+        throw new Error("PDF parsing failed");
+      }
+      throw new Error("Text extraction failed");
     }
 
-    // Source is ready for notebook chat once text is extracted and stored.
-    return prisma.source.update({
+    if (!extractedText) {
+      logger.warn("[EXTRACT] empty", { sourceId: pending.id });
+      throw new Error(
+        mediaType === "application/pdf"
+          ? "PDF parsing failed"
+          : "No extractable text found in this file."
+      );
+    }
+
+    logger.info("[EXTRACT] complete", {
+      sourceId: pending.id,
+      chars: extractedText.length,
+    });
+
+    // Upload pipeline complete. PENDING + extracted text unlocks chat.
+    // Embeddings / INDEXED are intentionally deferred.
+    const saved = await prisma.source.update({
       where: { id: pending.id },
       data: {
         storagePath: stored.storageKey,
         extractedText,
-        indexingStatus: "INDEXED",
+        indexingStatus: "PENDING",
       },
     });
-  } catch (error) {
-    await prisma.source.update({
-      where: { id: pending.id },
-      data: { indexingStatus: "FAILED" },
+
+    logger.info("[UPLOAD] complete", {
+      sourceId: saved.id,
+      notebookId: saved.notebookId,
+      indexingStatus: saved.indexingStatus,
+      hasExtractedText: true,
     });
-    throw error;
+
+    return saved;
+  } catch (error) {
+    logger.error("[UPLOAD] failed", {
+      sourceId: pending.id,
+      error: formatSourceUploadError(error),
+    });
+
+    if (storedKey) {
+      try {
+        await deleteStoredUpload({
+          objectId: pending.id,
+          storage: storedRemote ? "VERCEL_BLOB" : "LOCAL",
+          storageKey: storedKey,
+        });
+        logger.info("[STORE] cleanup_complete", { sourceId: pending.id });
+      } catch (cleanupError) {
+        logger.warn("[STORE] cleanup_failed", {
+          sourceId: pending.id,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        });
+      }
+    }
+
+    try {
+      await prisma.source.update({
+        where: { id: pending.id },
+        data: {
+          indexingStatus: "FAILED",
+          storagePath: storedKey ?? "pending",
+          extractedText: null,
+        },
+      });
+    } catch {
+      // Best-effort status update.
+    }
+
+    throw error instanceof Error
+      ? error
+      : new Error(formatSourceUploadError(error));
   }
 }
 

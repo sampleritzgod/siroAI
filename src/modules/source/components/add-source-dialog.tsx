@@ -2,13 +2,17 @@
 
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { cn } from "@/lib/utils";
-import { SOURCE_ALLOWED_MEDIA_TYPES } from "@/modules/source/constants";
+import {
+  MAX_UPLOAD_BYTES,
+  SOURCE_ALLOWED_MEDIA_TYPES,
+  resolveSourceMediaType,
+} from "@/modules/source/constants";
 
-const INDEXING_STEPS = [
-  "Processing…",
+const UPLOAD_STEPS = [
+  "Uploading…",
+  "Storing file…",
   "Extracting text…",
-  "Creating embeddings…",
-  "Indexing…",
+  "Saving…",
 ] as const;
 
 type AddSourceDialogProps = {
@@ -71,41 +75,91 @@ function AddSourceDialogForm({
 
     setStepIndex(0);
     const timers = [
-      window.setTimeout(() => setStepIndex(1), 400),
-      window.setTimeout(() => setStepIndex(2), 900),
-      window.setTimeout(() => setStepIndex(3), 1400),
+      window.setTimeout(() => setStepIndex(1), 350),
+      window.setTimeout(() => setStepIndex(2), 800),
+      window.setTimeout(() => setStepIndex(3), 1300),
     ];
     return () => {
       for (const timer of timers) window.clearTimeout(timer);
     };
   }, [isPending]);
 
+  function validateFile(file: File): string | null {
+    if (!file.size) {
+      return "File is empty.";
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`;
+    }
+    const mediaType = resolveSourceMediaType({
+      filename: file.name,
+      fileType: file.type,
+    });
+    if (!mediaType) {
+      return "Unsupported file type. Only PDF and plain text are allowed.";
+    }
+    return null;
+  }
+
   function uploadFile(file: File | undefined) {
     if (!file) return;
+
+    const validationError = validateFile(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    if (!notebookId.trim()) {
+      setError("Notebook not found");
+      return;
+    }
+
     setError(null);
 
     startTransition(() => {
       void (async () => {
-        const form = new FormData();
-        form.set("notebookId", notebookId);
-        form.set("file", file);
+        try {
+          const form = new FormData();
+          form.set("notebookId", notebookId);
+          form.set("file", file);
 
-        const response = await fetch("/api/sources", {
-          method: "POST",
-          body: form,
-        });
+          const response = await fetch("/api/sources", {
+            method: "POST",
+            body: form,
+          });
 
-        const payload = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
 
-        if (!response.ok) {
-          setError(payload?.error || "Upload failed");
-          return;
+          if (!response.ok) {
+            if (response.status === 401) {
+              setError("Unauthorized");
+              return;
+            }
+            if (response.status === 404) {
+              setError(payload?.error || "Notebook not found");
+              return;
+            }
+            setError(
+              payload?.error ||
+                (response.status === 413
+                  ? `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+                  : response.status === 415
+                    ? "Unsupported file type. Only PDF and plain text are allowed."
+                    : response.status === 422
+                      ? "PDF parsing failed"
+                      : "Unexpected server error")
+            );
+            return;
+          }
+
+          onUploaded();
+          onClose();
+        } catch {
+          setError("Network error during upload");
         }
-
-        onUploaded();
-        onClose();
       })();
     });
   }
@@ -130,12 +184,12 @@ function AddSourceDialogForm({
           Add Source
         </h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Upload a PDF or plain text file. Chat unlocks after indexing finishes.
+          Upload a PDF or plain text file to this notebook.
         </p>
 
         {isPending ? (
           <ol className="mt-5 space-y-2" aria-live="polite">
-            {INDEXING_STEPS.map((step, index) => (
+            {UPLOAD_STEPS.map((step, index) => (
               <li
                 key={step}
                 className={cn(

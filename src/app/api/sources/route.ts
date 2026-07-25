@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { captureException, logger } from "@/lib/logger";
 import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
+import { formatSourceUploadError } from "@/modules/source/constants";
 import { createSourceFromUpload } from "@/modules/source/service";
 
 function jsonError(
@@ -19,7 +20,12 @@ function jsonError(
  */
 export async function POST(req: Request) {
   try {
-    const user = await requireUser();
+    let user;
+    try {
+      user = await requireUser();
+    } catch {
+      return jsonError("Unauthorized", 401);
+    }
 
     const limited = await rateLimit({
       scope: "files",
@@ -48,12 +54,20 @@ export async function POST(req: Request) {
     const file = form.get("file");
 
     if (!notebookId) {
-      return jsonError("notebookId is required", 400);
+      return jsonError("Notebook not found", 400);
     }
 
     if (!(file instanceof File)) {
       return jsonError("file is required", 400);
     }
+
+    logger.info("[UPLOAD] api_received", {
+      userId: user.id,
+      notebookId,
+      filename: file.name,
+      type: file.type,
+      size: file.size,
+    });
 
     const notebook = await prisma.notebook.findFirst({
       where: { id: notebookId, userId: user.id },
@@ -70,13 +84,6 @@ export async function POST(req: Request) {
       file,
     });
 
-    logger.info("source_upload_complete", {
-      sourceId: source.id,
-      notebookId,
-      indexingStatus: source.indexingStatus,
-      hasExtractedText: Boolean(source.extractedText),
-    });
-
     return Response.json({
       id: source.id,
       notebookId: source.notebookId,
@@ -90,21 +97,29 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     await captureException(error, { stage: "source_upload" });
-    console.error("[api/sources POST]", error);
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
+    const message = formatSourceUploadError(error);
+    logger.error("[UPLOAD] api_error", { error: message });
 
-    if (/unauthorized/i.test(message)) {
+    if (message === "Unauthorized") {
       return jsonError(message, 401);
     }
-    if (/not found/i.test(message)) {
+    if (message === "Notebook not found") {
       return jsonError(message, 404);
     }
     if (/unsupported file type/i.test(message)) {
       return jsonError(message, 415);
     }
-    if (/between 1 byte/i.test(message)) {
+    if (/too large|file is empty/i.test(message)) {
       return jsonError(message, 413);
+    }
+    if (/pdf parsing|no extractable text|text extraction failed/i.test(message)) {
+      return jsonError(message, 422);
+    }
+    if (message === "Storage error") {
+      return jsonError(message, 502);
+    }
+    if (message === "Database error") {
+      return jsonError(message, 500);
     }
 
     return jsonError(message, 500);
