@@ -15,7 +15,6 @@ import {
   updateConversation,
 } from "@/modules/conversation/actions/conversation-actions";
 import type { ShareState } from "@/modules/conversation/actions/share-actions";
-import { MobileNavButton } from "@/components/mobile-nav-button";
 import { BranchSwitcher } from "@/modules/conversation/components/branch-switcher";
 import { ChatComposer } from "@/modules/conversation/components/chat-composer";
 import { ChatMessages } from "@/modules/conversation/components/chat-messages";
@@ -269,7 +268,6 @@ export function ConversationView({
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 sm:gap-3 sm:px-4">
-        <MobileNavButton />
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
           {title}
         </h1>
@@ -295,13 +293,8 @@ export function ConversationView({
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {messages.length === 0 && !isThinking ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center sm:px-6">
-            <h2 className="text-lg font-semibold tracking-tight sm:text-xl">
-              Ask about this notebook
-            </h2>
-            <p className="max-w-sm text-sm text-[var(--muted)]">
-              Questions stay inside this notebook and can use its sources.
-            </p>
+          <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
+            Ask a question about your sources
           </div>
         ) : (
           <ChatMessages

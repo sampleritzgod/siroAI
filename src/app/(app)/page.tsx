@@ -1,8 +1,8 @@
 import { requireUser } from "@/modules/auth/actions/require-user";
 
 /**
- * Home is the notebook workspace. The shell renders the selected notebook
- * dashboard; this page intentionally stays empty so chat is not the default.
+ * Notebook home is rendered by the Sources | Chat | Studio workspace shell.
+ * Chat welcome lives in the center panel until a conversation is opened.
  */
 export default async function HomePage() {
   await requireUser();
