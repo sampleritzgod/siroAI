@@ -6,7 +6,10 @@ import {
   type TranscriptConfig,
   type TranscriptResponse,
 } from "youtube-transcript";
-import { SOURCE_TITLE_MAX_LENGTH } from "@/modules/source/constants";
+import {
+  CLOUD_YOUTUBE_BLOCKED_MESSAGE,
+  SOURCE_TITLE_MAX_LENGTH,
+} from "@/modules/source/constants";
 
 export const YOUTUBE_FETCH_TIMEOUT_MS = 45_000;
 export const YOUTUBE_MIN_TRANSCRIPT_CHARS = 40;
@@ -43,16 +46,11 @@ type InnertubeClient = {
 };
 
 /**
- * Multiple InnerTube clients — datacenter IPs (e.g. Vercel) often fail on
- * ANDROID alone while WEB / IOS still return caption tracks.
+ * Multiple InnerTube clients. ANDROID/IOS usually return caption tracks on
+ * residential IPs; WEB is often empty. Datacenter IPs (Vercel) commonly block
+ * timedtext entirely — use SUPADATA_API_KEY there.
  */
 const INNERTUBE_CLIENTS: InnertubeClient[] = [
-  {
-    clientName: "WEB",
-    clientVersion: "2.20250313.00.00",
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  },
   {
     clientName: "ANDROID",
     clientVersion: "20.10.38",
@@ -65,11 +63,21 @@ const INNERTUBE_CLIENTS: InnertubeClient[] = [
       "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
   },
   {
+    clientName: "WEB",
+    clientVersion: "2.20250313.00.00",
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  },
+  {
     clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
     clientVersion: "2.0",
     userAgent: "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
   },
 ];
+
+const SUPADATA_TRANSCRIPT_URL = "https://api.supadata.ai/v1/transcript";
+const SUPADATA_POLL_INTERVAL_MS = 1_000;
+const SUPADATA_MAX_POLLS = 40;
 
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
@@ -234,9 +242,9 @@ export async function fetchYoutubeContent(
 
 /**
  * Robust transcript fetch:
- * 1) Multi-client InnerTube (works better from cloud IPs)
- * 2) Watch-page caption scrape
- * 3) Prefer English / asr auto-captions when present
+ * 1) Supadata (required on Vercel — YouTube blocks datacenter IPs)
+ * 2) Multi-client InnerTube + timedtext (works on residential IPs)
+ * 3) Watch-page caption scrape
  */
 async function fetchTranscriptRobust(
   videoId: string,
@@ -248,6 +256,31 @@ async function fetchTranscriptRobust(
   const fetchFn = config?.fetch ?? fetch;
 
   const errors: string[] = [];
+  const apiKey = process.env.SUPADATA_API_KEY?.trim();
+
+  if (apiKey) {
+    try {
+      const segments = await fetchTranscriptViaSupadata(
+        identifier,
+        apiKey,
+        fetchFn,
+        config?.lang
+      );
+      if (segments.length > 0) return segments;
+      errors.push("supadata: empty transcript");
+    } catch (error) {
+      if (
+        error instanceof YoutubeTranscriptDisabledError ||
+        error instanceof YoutubeTranscriptNotAvailableError ||
+        error instanceof YoutubeTranscriptVideoUnavailableError
+      ) {
+        throw error;
+      }
+      errors.push(
+        `supadata: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 
   for (const client of INNERTUBE_CLIENTS) {
     try {
@@ -308,9 +341,17 @@ async function fetchTranscriptRobust(
   if (/unavailable|not found|private|login/i.test(joined)) {
     throw new YoutubeTranscriptVideoUnavailableError(identifier);
   }
-  // Prefer "disabled/not available" only when every strategy saw empty tracks.
+
+  // On Vercel without Supadata, empty tracks almost always mean IP block —
+  // not a missing transcript (same video works from residential networks).
+  if (isCloudHostWithoutSupadata(apiKey)) {
+    throw new Error(CLOUD_YOUTUBE_BLOCKED_MESSAGE);
+  }
+
   if (
-    errors.every((item) => /no caption tracks|empty caption body/i.test(item))
+    errors.every((item) =>
+      /no caption tracks|empty caption body|empty transcript/i.test(item)
+    )
   ) {
     throw new YoutubeTranscriptDisabledError(identifier);
   }
@@ -318,6 +359,178 @@ async function fetchTranscriptRobust(
   throw new Error(
     `YouTube transcript fetch failed (${identifier}): ${joined.slice(0, 400)}`
   );
+}
+
+function isCloudHostWithoutSupadata(apiKey: string | undefined): boolean {
+  if (apiKey) return false;
+  return (
+    process.env.VERCEL === "1" ||
+    Boolean(process.env.VERCEL_ENV) ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME != null ||
+    process.env.CF_PAGES === "1"
+  );
+}
+
+type SupadataTranscriptPayload = {
+  content?: string | Array<{ text?: string; offset?: number; duration?: number; lang?: string }>;
+  lang?: string;
+  jobId?: string;
+  status?: string;
+  error?: string | { message?: string };
+};
+
+/**
+ * Fetch native captions via Supadata (works from Vercel).
+ * Uses mode=native only — no AI generation.
+ */
+async function fetchTranscriptViaSupadata(
+  videoId: string,
+  apiKey: string,
+  fetchFn: typeof fetch,
+  lang?: string
+): Promise<TranscriptResponse[]> {
+  const url = new URL(SUPADATA_TRANSCRIPT_URL);
+  url.searchParams.set("url", normalizeYoutubeUrl(videoId));
+  url.searchParams.set("text", "false");
+  url.searchParams.set("mode", "native");
+  if (lang) url.searchParams.set("lang", lang);
+
+  const response = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      "x-api-key": apiKey,
+      Accept: "application/json",
+    },
+  });
+
+  if (response.status === 206 || response.status === 404) {
+    throw new YoutubeTranscriptNotAvailableError(videoId);
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("Invalid SUPADATA_API_KEY");
+  }
+  if (response.status === 429) {
+    throw new YoutubeTranscriptTooManyRequestError();
+  }
+
+  const payload = (await response.json().catch(() => null)) as
+    | SupadataTranscriptPayload
+    | { error?: string; message?: string; details?: string }
+    | null;
+
+  if (!response.ok && response.status !== 202) {
+    const code =
+      payload && "error" in payload
+        ? typeof payload.error === "string"
+          ? payload.error
+          : payload.error?.message
+        : undefined;
+    const message =
+      (payload && "message" in payload && typeof payload.message === "string"
+        ? payload.message
+        : undefined) ||
+      code ||
+      `HTTP ${response.status}`;
+
+    if (/transcript-unavailable|not.?available|no transcript/i.test(message)) {
+      throw new YoutubeTranscriptNotAvailableError(videoId);
+    }
+    if (/not-found|not found/i.test(message)) {
+      throw new YoutubeTranscriptVideoUnavailableError(videoId);
+    }
+    throw new Error(message);
+  }
+
+  let result = payload as SupadataTranscriptPayload | null;
+
+  if (response.status === 202 || result?.jobId) {
+    const jobId = result?.jobId;
+    if (!jobId) {
+      throw new Error("Supadata returned a job without jobId");
+    }
+    result = await pollSupadataJob(jobId, apiKey, fetchFn);
+  }
+
+  return parseSupadataTranscript(result, videoId, lang);
+}
+
+async function pollSupadataJob(
+  jobId: string,
+  apiKey: string,
+  fetchFn: typeof fetch
+): Promise<SupadataTranscriptPayload> {
+  for (let attempt = 0; attempt < SUPADATA_MAX_POLLS; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, SUPADATA_POLL_INTERVAL_MS)
+      );
+    }
+
+    const response = await fetchFn(`${SUPADATA_TRANSCRIPT_URL}/${jobId}`, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey,
+        Accept: "application/json",
+      },
+    });
+
+    const payload = (await response.json().catch(() => null)) as
+      | SupadataTranscriptPayload
+      | null;
+
+    if (!response.ok) {
+      throw new Error(
+        `Supadata job failed (HTTP ${response.status})`
+      );
+    }
+
+    const status = payload?.status ?? "completed";
+    if (status === "failed") {
+      const err =
+        typeof payload?.error === "string"
+          ? payload.error
+          : payload?.error?.message || "job failed";
+      throw new Error(`Supadata job failed: ${err}`);
+    }
+    if (status === "queued" || status === "active") {
+      continue;
+    }
+    // completed or missing status with content
+    if (payload) return payload;
+  }
+
+  throw new Error("Supadata transcript job timed out");
+}
+
+function parseSupadataTranscript(
+  payload: SupadataTranscriptPayload | null,
+  videoId: string,
+  preferredLang?: string
+): TranscriptResponse[] {
+  if (!payload?.content) {
+    throw new YoutubeTranscriptNotAvailableError(videoId);
+  }
+
+  const lang = payload.lang ?? preferredLang ?? "en";
+
+  if (typeof payload.content === "string") {
+    const text = payload.content.trim();
+    if (!text) throw new YoutubeTranscriptNotAvailableError(videoId);
+    return [{ text, duration: 0, offset: 0, lang }];
+  }
+
+  if (!Array.isArray(payload.content) || payload.content.length === 0) {
+    throw new YoutubeTranscriptNotAvailableError(videoId);
+  }
+
+  return payload.content
+    .map((chunk) => ({
+      text: (chunk.text ?? "").trim(),
+      duration: chunk.duration ?? 0,
+      offset: chunk.offset ?? 0,
+      lang: chunk.lang ?? lang,
+    }))
+    .filter((segment) => segment.text.length > 0);
 }
 
 async function fetchCaptionTracksViaInnertube(
@@ -630,11 +843,14 @@ function mapTranscriptError(error: unknown, videoId: string): Error {
   if (error instanceof Error) {
     // Preserve already-mapped product errors.
     if (
-      /no transcript available|private or restricted|not found or deleted|timed out|rate limited|blocked transcript/i.test(
+      /no transcript available|private or restricted|not found or deleted|timed out|rate limited|blocked transcript|SUPADATA_API_KEY/i.test(
         error.message
       )
     ) {
       return error;
+    }
+    if (/Invalid SUPADATA_API_KEY/i.test(error.message)) {
+      return new Error("Invalid SUPADATA_API_KEY");
     }
     if (/private/i.test(error.message)) {
       return new Error("Private or restricted YouTube video");

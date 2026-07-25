@@ -69,7 +69,7 @@ function mapUploadError(message: string) {
     return jsonError(message, 413);
   }
   if (
-    /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced|empty website|website unreachable|website fetch timed out|timed out|no transcript|youtube video|private or restricted|youtube transcript|blocked transcript/i.test(
+    /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced|empty website|website unreachable|website fetch timed out|timed out|no transcript|youtube video|private or restricted|youtube transcript|blocked transcript|SUPADATA_API_KEY/i.test(
       message
     )
   ) {

@@ -48,4 +48,6 @@ Chat with streaming replies, stop generation, regenerate an answer, or edit a me
 
 On Vercel, add the same env vars, point `DATABASE_URL` at your production Postgres, and run `pnpm db:deploy` once. For uploads in production, set `BLOB_READ_WRITE_TOKEN`. Redis is optional — the app still runs without it.
 
+**YouTube sources on Vercel:** YouTube blocks caption downloads from cloud IPs. Set `SUPADATA_API_KEY` (free at [supadata.ai](https://supadata.ai)) in Vercel env so Add YouTube works in production. Locally it works without that key.
+
 That’s all you need to install, run, and ship SiroAI.

@@ -57,9 +57,11 @@ describe("youtube URL helpers", () => {
     );
     assert.equal(
       formatSourceUploadError(
-        new Error("This YouTube video is already added to the notebook.")
+        new Error(
+          "YouTube blocked transcript access from this server. Add SUPADATA_API_KEY (free at https://supadata.ai) in Vercel env, then redeploy."
+        )
       ),
-      "This YouTube video is already added to the notebook."
+      "YouTube blocked transcript access from this server. Add SUPADATA_API_KEY (free at https://supadata.ai) in Vercel env, then redeploy."
     );
   });
 });

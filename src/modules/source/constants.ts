@@ -19,6 +19,10 @@ export const WEBSITE_STORAGE_PATH = "website";
 /** Sentinel storagePath for YouTube sources (not a blob/local file key). */
 export const YOUTUBE_STORAGE_PATH = "youtube";
 
+/** Shown when YouTube blocks caption fetches from cloud IPs (e.g. Vercel). */
+export const CLOUD_YOUTUBE_BLOCKED_MESSAGE =
+  "YouTube blocked transcript access from this server. Add SUPADATA_API_KEY (free at https://supadata.ai) in Vercel env, then redeploy.";
+
 export function isSourceAllowedMediaType(
   value: string
 ): value is SourceAllowedMediaType {
@@ -99,8 +103,17 @@ export function formatSourceUploadError(error: unknown): string {
   if (/youtube transcript fetch timed out/i.test(message)) {
     return "YouTube transcript fetch timed out";
   }
-  if (/blocked transcript access|too many requests|rate limited/i.test(message)) {
-    return "YouTube temporarily blocked transcript access from this server. Try again shortly.";
+  if (/invalid SUPADATA_API_KEY/i.test(message)) {
+    return "Invalid SUPADATA_API_KEY";
+  }
+  if (
+    /blocked transcript access|too many requests|rate limited|SUPADATA_API_KEY/i.test(
+      message
+    )
+  ) {
+    return message.includes("SUPADATA_API_KEY")
+      ? CLOUD_YOUTUBE_BLOCKED_MESSAGE
+      : "YouTube temporarily blocked transcript access from this server. Try again shortly.";
   }
   if (/youtube transcript fetch failed/i.test(message)) {
     return message.startsWith("YouTube transcript fetch failed")

@@ -23,6 +23,12 @@ export const env = createEnv({
     BLOB_READ_WRITE_TOKEN: z.string().min(1).optional(),
     /** Optional — Sentry DSN for exception capture. */
     SENTRY_DSN: z.url().optional(),
+    /**
+     * Optional — Supadata for YouTube transcripts on Vercel.
+     * YouTube blocks caption fetches from datacenter IPs; Supadata bypasses that.
+     * Free tier: https://dash.supadata.ai
+     */
+    SUPADATA_API_KEY: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1),
@@ -40,6 +46,7 @@ export const env = createEnv({
     UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
     SENTRY_DSN: process.env.SENTRY_DSN,
+    SUPADATA_API_KEY: process.env.SUPADATA_API_KEY,
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
       process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     NEXT_PUBLIC_CLERK_SIGN_IN_URL: process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL,
