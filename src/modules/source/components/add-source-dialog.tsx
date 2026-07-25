@@ -27,6 +27,12 @@ const YOUTUBE_STEPS = [
   "Queuing indexing…",
 ] as const;
 
+function formatMb(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 100) return `${Math.round(mb)}MB`;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)}MB`;
+}
+
 type AddSourceDialogProps = {
   open: boolean;
   notebookId: string | null;
@@ -121,7 +127,7 @@ function AddSourceDialogForm({
       return "File is empty.";
     }
     if (file.size > MAX_UPLOAD_BYTES) {
-      return `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`;
+      return `File too large (${formatMb(file.size)}). Maximum size is ${formatMb(MAX_UPLOAD_BYTES)}.`;
     }
     const mediaType = resolveSourceMediaType({
       filename: file.name,
@@ -154,6 +160,10 @@ function AddSourceDialogForm({
     setElapsedSec(0);
     setIsUploading(true);
 
+    // Vercel Functions reject request bodies over ~4.5MB. Files above that
+    // must use browser→S3 direct upload — never multipart through /api/sources.
+    const mustUseDirectUpload = file.size > 4 * 1024 * 1024;
+
     try {
       const mediaType =
         resolveSourceMediaType({
@@ -161,7 +171,6 @@ function AddSourceDialogForm({
           fileType: file.type,
         }) ?? file.type;
 
-      // Prefer browser → S3 direct upload (avoids Vercel’s 4.5MB body limit).
       const presignResponse = await fetch("/api/sources/presign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -196,7 +205,7 @@ function AddSourceDialogForm({
 
         if (!putResponse.ok) {
           setError(
-            "Could not upload file to storage. If this persists, check S3 CORS for this site."
+            "Could not upload file to storage. Check S3 CORS allows PUT from this site."
           );
           return;
         }
@@ -214,20 +223,22 @@ function AddSourceDialogForm({
         return;
       }
 
-      // S3 not configured (501) or small-file fallback: multipart through the API.
-      if (presignResponse.status !== 501) {
-        const payload = (await presignResponse.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        if (presignResponse.status === 413 || payload?.error) {
-          setError(
-            payload?.error ||
-              `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
-          );
-          return;
-        }
+      const presignPayload = (await presignResponse.json().catch(() => null)) as {
+        error?: string;
+        code?: string;
+      } | null;
+
+      if (mustUseDirectUpload || presignResponse.status !== 501) {
+        setError(
+          presignPayload?.error ||
+            (presignResponse.status === 501
+              ? "Cloud storage is not configured for large files. Set AWS S3 env vars on Vercel."
+              : `Upload failed (${presignResponse.status}). Your file is ${formatMb(file.size)} — well under the ${formatMb(MAX_UPLOAD_BYTES)} app limit.`)
+        );
+        return;
       }
 
+      // Small files only: multipart fallback when S3 is unavailable locally.
       const form = new FormData();
       form.set("notebookId", notebookId);
       form.set("file", file);
@@ -237,7 +248,7 @@ function AddSourceDialogForm({
         body: form,
       });
 
-      await handleSourceResponse(response);
+      await handleSourceResponse(response, file.size);
     } catch {
       setError("Network error during upload");
     } finally {
@@ -286,7 +297,7 @@ function AddSourceDialogForm({
     }
   }
 
-  async function handleSourceResponse(response: Response) {
+  async function handleSourceResponse(response: Response, fileSize?: number) {
     const payload = (await response.json().catch(() => null)) as {
       error?: string;
     } | null;
@@ -300,17 +311,26 @@ function AddSourceDialogForm({
         setError(payload?.error || "Notebook not found");
         return;
       }
+      if (response.status === 413) {
+        // Vercel proxy limit (~4.5MB), NOT the app’s MAX_UPLOAD_BYTES.
+        const sizeHint =
+          typeof fileSize === "number" ? ` (${formatMb(fileSize)})` : "";
+        setError(
+          payload?.error && !/maximum size is/i.test(payload.error)
+            ? payload.error
+            : `Upload was blocked by the hosting proxy${sizeHint}. Files over ~4.5MB must use direct S3 upload — refresh and try again.`
+        );
+        return;
+      }
       setError(
         payload?.error ||
-          (response.status === 413
-            ? `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
-            : response.status === 415
-              ? "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
-              : response.status === 409
-                ? "This source is already added to the notebook."
-                : response.status === 422
-                  ? "Could not extract content from this source"
-                  : "Unexpected server error")
+          (response.status === 415
+            ? "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
+            : response.status === 409
+              ? "This source is already added to the notebook."
+              : response.status === 422
+                ? "Could not extract content from this source"
+                : "Unexpected server error")
       );
       return;
     }

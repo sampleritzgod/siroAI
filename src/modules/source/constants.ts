@@ -197,6 +197,13 @@ export function toSourceAppError(error: unknown): AppError {
     );
   }
   if (/too large|between 1 byte|file must be|file is empty/i.test(message)) {
+    // Don't rewrite real size messages; avoid blaming MAX_UPLOAD when the
+    // platform proxy (Vercel ~4.5MB) rejected a smaller file.
+    if (/FUNCTION_PAYLOAD_TOO_LARGE|payload too large|request entity too large/i.test(message)) {
+      return payloadTooLarge(
+        "Upload blocked by hosting proxy (~4.5MB). Use direct S3 upload."
+      );
+    }
     return payloadTooLarge(
       message.includes("MB") || /empty/i.test(message)
         ? message
