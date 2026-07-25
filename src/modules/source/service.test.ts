@@ -133,8 +133,9 @@ describe("source service", { skip: !hasDatabase || !hasOpenAI }, () => {
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
   });
 
-  it("uploads a PDF, extracts text, and indexes chunks", async () => {
-    // Minimal PDF with extractable text (Hello World from transformers).
+  it("rejects image-only / non-embeddable PDFs with a clear error", async () => {
+    // Minimal PDF whose text layer is not reliably extractable by unpdf —
+    // production must fail closed instead of indexing a vision stub.
     const pdfBytes = Buffer.from(
       `%PDF-1.1
 1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
@@ -159,25 +160,17 @@ startxref
 %%EOF`
     );
 
-    const source = await createIndexedSourceFromUpload({
-      userId: userAId,
-      notebookId: notebookAId,
-      file: new File([pdfBytes], "Deep Learning.pdf", {
-        type: "application/pdf",
-      }),
-    });
-
-    assert.equal(source.type, "PDF");
-    assert.equal(source.title, "Deep Learning");
-    assert.equal(source.originalFileName, "Deep Learning.pdf");
-    assert.equal(source.mimeType, "application/pdf");
-    assert.ok(source.storagePath);
-    assert.notEqual(source.storagePath, "pending");
-    assert.equal(source.indexingStatus, "INDEXED");
-    assert.ok(source.extractedText);
-    assert.ok((await countSourceChunks(source.id)) > 0);
-
-    await deleteSourceForUser({ userId: userAId, sourceId: source.id });
+    await assert.rejects(
+      () =>
+        createIndexedSourceFromUpload({
+          userId: userAId,
+          notebookId: notebookAId,
+          file: new File([pdfBytes], "Deep Learning.pdf", {
+            type: "application/pdf",
+          }),
+        }),
+      /no embeddable text|image-only PDF|PDF extraction failed/i
+    );
   });
 
   it("rejects unsupported file types", async () => {

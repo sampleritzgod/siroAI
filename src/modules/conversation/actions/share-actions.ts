@@ -10,7 +10,7 @@ async function assertOwner(conversationId: string, userId: string) {
     where: {
       id: conversationId,
       userId,
-      notebook: { userId },
+      notebook: { userId, deletedAt: null },
     },
     select: {
       id: true,
@@ -59,7 +59,7 @@ export async function getShareState(
     where: {
       id: conversationId,
       userId: user.id,
-      notebook: { userId: user.id },
+      notebook: { userId: user.id, deletedAt: null },
     },
     select: {
       shareToken: true,

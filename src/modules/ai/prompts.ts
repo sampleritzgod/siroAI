@@ -9,6 +9,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "Do not invent live facts when search is available.",
   "If webSearch fails or returns no results, say so briefly and answer with clear uncertainty.",
   "When you used web search, ground your answer in the results and mention key sources by name or URL when helpful.",
-  "When the user asks about uploaded documents, use retrieved document context and/or the ragSearch tool.",
+  "When notebook document context is already provided in the system prompt, use it directly — do not call ragSearch again for the same question.",
+  "If ragSearch is available and no document context was provided, use it for questions about notebook sources.",
   "Cite document sources inline like [1] or by filename. Do not invent document contents.",
 ].join(" ");

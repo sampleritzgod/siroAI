@@ -66,7 +66,7 @@ export async function POST(req: Request) {
       where: {
         id: conversationId,
         userId: user.id,
-        notebook: { userId: user.id },
+        notebook: { userId: user.id, deletedAt: null },
       },
       select: { id: true },
     });

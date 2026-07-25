@@ -67,5 +67,11 @@ describe("source constants", () => {
       formatSourceUploadError(new Error("BLOB write failed")),
       "Storage error"
     );
+    assert.equal(
+      formatSourceUploadError(
+        new Error("PDF extraction failed: no embeddable text (image-only PDF).")
+      ),
+      "PDF extraction failed: no embeddable text (image-only PDF)."
+    );
   });
 });

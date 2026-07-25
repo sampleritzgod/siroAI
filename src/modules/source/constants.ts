@@ -75,18 +75,30 @@ export function formatSourceUploadError(error: unknown): string {
       ? message
       : `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`;
   }
-  if (/pdf parsing|no extractable text|corrupt/i.test(message)) {
-    return /no extractable text/i.test(message)
-      ? message
-      : "PDF parsing failed";
+  if (
+    /pdf parsing|no extractable text|no embeddable text|image-only pdf|corrupt/i.test(
+      message
+    )
+  ) {
+    if (/no extractable text|no embeddable text|image-only/i.test(message)) {
+      return "PDF extraction failed: no embeddable text (image-only PDF).";
+    }
+    return "PDF parsing failed";
+  }
+  if (/embedding failed|embeddings missing|chunking produced/i.test(message)) {
+    return message;
   }
   if (/storage error:/i.test(message)) {
     return message;
   }
-  if (/BLOB_STORE_ID|BLOB_READ_WRITE_TOKEN|blob store|ENOENT|EACCES/i.test(message)) {
+  if (
+    /BLOB_STORE_ID|BLOB_READ_WRITE_TOKEN|blob store|blob write|ENOENT|EACCES/i.test(
+      message
+    )
+  ) {
     return message.startsWith("Storage error")
       ? message
-      : `Storage error: ${message}`;
+      : "Storage error";
   }
   if (/prisma|database|P\d{4}/i.test(message)) {
     return "Database error";

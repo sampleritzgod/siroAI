@@ -312,10 +312,18 @@ describe("notebook service", { skip: !hasDatabase }, () => {
         notebookId: created.id,
       });
 
-      const gone = await prisma.notebook.findUnique({
+      const softDeleted = await prisma.notebook.findUnique({
         where: { id: created.id },
       });
-      assert.equal(gone, null);
+      assert.ok(softDeleted);
+      assert.ok(softDeleted.deletedAt);
+      assert.equal(
+        await getNotebookForUser({
+          userId: userAId,
+          notebookId: created.id,
+        }),
+        null
+      );
       await forceDeleteNotebook(spare.id);
     });
   });

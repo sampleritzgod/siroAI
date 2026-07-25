@@ -2,6 +2,9 @@ import { prisma } from "@/lib/db";
 import { embedQuery, toVectorLiteral } from "@/modules/rag/embed";
 import { stageLog } from "@/modules/rag/pipeline-log";
 
+/** Minimum cosine similarity for a chunk to count as relevant. */
+export const MIN_RETRIEVAL_SCORE = 0.1;
+
 export type RetrievedChunk = {
   id: string;
   attachmentId: string | null;
@@ -22,9 +25,11 @@ export async function retrieveRelevantChunks(input: {
   notebookId?: string | null;
   query: string;
   limit?: number;
+  minScore?: number;
 }): Promise<RetrievedChunk[]> {
   const stage = stageLog("RETRIEVE");
   const query = input.query.trim();
+  const minScore = input.minScore ?? MIN_RETRIEVAL_SCORE;
 
   if (!query) {
     stage.started({
@@ -42,6 +47,7 @@ export async function retrieveRelevantChunks(input: {
     notebookId: input.notebookId ?? null,
     queryChars: query.length,
     limit,
+    minScore,
   });
 
   try {
@@ -64,7 +70,7 @@ export async function retrieveRelevantChunks(input: {
         c.id,
         c."attachmentId",
         c."sourceId",
-        COALESCE(a.filename, s."originalFileName", s.title, 'document') AS filename,
+        COALESCE(s.title, a.filename, s."originalFileName", 'document') AS filename,
         c."chunkIndex",
         c.content,
         (1 - (c.embedding <=> ${vector}::vector))::float8 AS score
@@ -82,15 +88,19 @@ export async function retrieveRelevantChunks(input: {
       LIMIT ${limit}
     `;
 
-    const chunks = rows.map((row) => ({
+    const scored = rows.map((row) => ({
       ...row,
       score: Number(row.score),
     }));
+
+    const chunks = scored.filter((chunk) => chunk.score >= minScore);
 
     stage.completed({
       conversationId: input.conversationId,
       notebookId,
       retrievedCount: chunks.length,
+      candidateCount: scored.length,
+      filteredOut: scored.length - chunks.length,
       chunkIds: chunks.map((chunk) => chunk.id),
       sourceIds: chunks
         .map((chunk) => chunk.sourceId)

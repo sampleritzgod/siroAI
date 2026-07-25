@@ -8,10 +8,14 @@ import { webSearchTool } from "./web-search";
 export function createChatTools(input: {
   conversationId: string;
   notebookId: string;
+  /** When true, skip ragSearch — context was already injected into the system prompt. */
+  skipRagSearch?: boolean;
 }) {
   return {
     webSearch: webSearchTool,
-    ragSearch: createRagSearchTool(input),
+    ...(input.skipRagSearch
+      ? {}
+      : { ragSearch: createRagSearchTool(input) }),
   };
 }
 

@@ -239,13 +239,6 @@ export async function POST(req: Request) {
       visionEnabled: modelDefinition.capabilities.vision,
     });
 
-    const tools = toolsEnabled
-      ? createChatTools({
-          conversationId: id,
-          notebookId: notebook.id,
-        })
-      : undefined;
-
     const retrieveStage = stageLog("RETRIEVE");
     const promptStage = stageLog("PROMPT");
     const llmStage = stageLog("LLM");
@@ -254,6 +247,7 @@ export async function POST(req: Request) {
 
     let ragContext = "";
     let retrievedCount = 0;
+    let retrievalAttempted = false;
     try {
       const hasNotebookChunks = await notebookHasIndexedChunks(notebook.id);
       const hasAttachmentChunks = await conversationHasIndexedChunks(id);
@@ -283,6 +277,7 @@ export async function POST(req: Request) {
           .trim();
 
         if (latestUserText) {
+          retrievalAttempted = true;
           const chunks = await retrieveRelevantChunks({
             conversationId: id,
             notebookId: notebook.id,
@@ -297,11 +292,12 @@ export async function POST(req: Request) {
               requestId,
               conversationId: id,
               notebookId: notebook.id,
-              reason: "Retrieval returned zero chunks",
+              reason:
+                "No chunks above similarity floor (or empty index match)",
             });
             ragContext = [
               "Retrieved notebook document context:",
-              "Retrieval returned zero chunks for this question.",
+              "No sufficiently relevant passages were found for this question.",
               "Say clearly that the information is not present in the notebook sources.",
             ].join("\n");
           }
@@ -313,13 +309,18 @@ export async function POST(req: Request) {
         conversationId: id,
         notebookId: notebook.id,
       });
-      return jsonError(
-        error instanceof Error
-          ? `Retrieval failed: ${error.message}`
-          : "Retrieval failed",
-        500
-      );
+      // Do not leak provider/DB internals to the client.
+      return jsonError("Retrieval failed", 500);
     }
+
+    // Avoid a second embed+retrieve via ragSearch when context was already injected.
+    const tools = toolsEnabled
+      ? createChatTools({
+          conversationId: id,
+          notebookId: notebook.id,
+          skipRagSearch: retrievalAttempted,
+        })
+      : undefined;
 
     const modelMessages = await convertToModelMessages(modelReadyMessages, {
       tools,

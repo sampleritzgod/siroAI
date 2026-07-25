@@ -78,77 +78,144 @@ async function assertSourceOwner(sourceId: string, userId: string) {
   return source;
 }
 
+const STALE_PROCESSING_MS = 10 * 60 * 1000;
+
+/**
+ * Mark sources stuck in PROCESSING longer than the timeout as FAILED.
+ * Prevents the 1s refresh loop from running forever after a crashed after().
+ */
+async function failStaleProcessingSources(where: {
+  notebookId?: string;
+  userId?: string;
+}) {
+  const cutoff = new Date(Date.now() - STALE_PROCESSING_MS);
+  await prisma.source.updateMany({
+    where: {
+      indexingStatus: "PROCESSING",
+      updatedAt: { lt: cutoff },
+      ...(where.notebookId ? { notebookId: where.notebookId } : {}),
+      ...(where.userId
+        ? { notebook: { userId: where.userId, deletedAt: null } }
+        : {}),
+    },
+    data: { indexingStatus: "FAILED" },
+  });
+}
+
+function toSourceListItem(row: {
+  id: string;
+  notebookId: string;
+  type: SourceType;
+  title: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSize: number;
+  indexingStatus: SourceIndexingStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  hasExtractedText: boolean;
+}): SourceListItem {
+  return {
+    id: row.id,
+    notebookId: row.notebookId,
+    type: row.type,
+    title: row.title,
+    originalFileName: row.originalFileName,
+    mimeType: row.mimeType,
+    fileSize: row.fileSize,
+    indexingStatus: row.indexingStatus,
+    hasExtractedText: row.hasExtractedText,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 export async function listSourcesForNotebook(input: {
   userId: string;
   notebookId: string;
 }): Promise<SourceListItem[]> {
   await assertNotebookOwner(input.notebookId, input.userId);
+  await failStaleProcessingSources({ notebookId: input.notebookId });
 
-  const rows = await prisma.source.findMany({
-    where: { notebookId: input.notebookId },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      notebookId: true,
-      type: true,
-      title: true,
-      originalFileName: true,
-      mimeType: true,
-      fileSize: true,
-      indexingStatus: true,
-      extractedText: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      notebookId: string;
+      type: SourceType;
+      title: string;
+      originalFileName: string;
+      mimeType: string;
+      fileSize: number;
+      indexingStatus: SourceIndexingStatus;
+      createdAt: Date;
+      updatedAt: Date;
+      hasExtractedText: boolean;
+    }>
+  >`
+    SELECT
+      id,
+      "notebookId",
+      type,
+      title,
+      "originalFileName",
+      "mimeType",
+      "fileSize",
+      "indexingStatus",
+      "createdAt",
+      "updatedAt",
+      (
+        "extractedText" IS NOT NULL
+        AND length(btrim("extractedText")) > 0
+      ) AS "hasExtractedText"
+    FROM "Source"
+    WHERE "notebookId" = ${input.notebookId}
+    ORDER BY "createdAt" DESC
+  `;
 
-  return rows.map((row) => ({
-    id: row.id,
-    notebookId: row.notebookId,
-    type: row.type,
-    title: row.title,
-    originalFileName: row.originalFileName,
-    mimeType: row.mimeType,
-    fileSize: row.fileSize,
-    indexingStatus: row.indexingStatus,
-    hasExtractedText: Boolean(row.extractedText),
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }));
+  return rows.map(toSourceListItem);
 }
 
 export async function listSourcesForUser(userId: string): Promise<SourceListItem[]> {
-  const rows = await prisma.source.findMany({
-    where: { notebook: { userId, deletedAt: null } },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      notebookId: true,
-      type: true,
-      title: true,
-      originalFileName: true,
-      mimeType: true,
-      fileSize: true,
-      indexingStatus: true,
-      extractedText: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  await failStaleProcessingSources({ userId });
 
-  return rows.map((row) => ({
-    id: row.id,
-    notebookId: row.notebookId,
-    type: row.type,
-    title: row.title,
-    originalFileName: row.originalFileName,
-    mimeType: row.mimeType,
-    fileSize: row.fileSize,
-    indexingStatus: row.indexingStatus,
-    hasExtractedText: Boolean(row.extractedText),
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }));
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      notebookId: string;
+      type: SourceType;
+      title: string;
+      originalFileName: string;
+      mimeType: string;
+      fileSize: number;
+      indexingStatus: SourceIndexingStatus;
+      createdAt: Date;
+      updatedAt: Date;
+      hasExtractedText: boolean;
+    }>
+  >`
+    SELECT
+      s.id,
+      s."notebookId",
+      s.type,
+      s.title,
+      s."originalFileName",
+      s."mimeType",
+      s."fileSize",
+      s."indexingStatus",
+      s."createdAt",
+      s."updatedAt",
+      (
+        s."extractedText" IS NOT NULL
+        AND length(btrim(s."extractedText")) > 0
+      ) AS "hasExtractedText"
+    FROM "Source" s
+    INNER JOIN "Notebook" n ON n.id = s."notebookId"
+    WHERE n."userId" = ${userId}
+      AND n."deletedAt" IS NULL
+    ORDER BY s."createdAt" DESC
+  `;
+
+  return rows.map(toSourceListItem);
 }
 
 export async function getSourceForUser(input: {
@@ -309,7 +376,11 @@ export async function createSourceFromUpload(input: {
       const newline = extractedText.indexOf("\n");
       const remainder =
         newline === -1 ? "" : extractedText.slice(newline).trim();
-      if (!remainder) {
+      // Vision fallback notes are not real document text — reject them.
+      const isVisionStub =
+        !remainder ||
+        remainder.startsWith("[PDF has no extractable text layer");
+      if (isVisionStub) {
         const error = new Error(
           "PDF extraction failed: no embeddable text (image-only PDF)."
         );

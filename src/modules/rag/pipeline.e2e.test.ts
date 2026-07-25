@@ -12,6 +12,7 @@ import {
 } from "@/modules/rag/index-source";
 import {
   formatRetrievedContext,
+  MIN_RETRIEVAL_SCORE,
   retrieveRelevantChunks,
 } from "@/modules/rag/retrieve";
 import {
@@ -87,7 +88,7 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
     const chunks = await retrieveRelevantChunks({
       conversationId: conversation.id,
       notebookId,
-      query: "What is this document about?",
+      query: "quantum entanglement particles",
       limit: 4,
     });
     const retrieveMs = Date.now() - retrieveStarted;
@@ -128,7 +129,7 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
     await deleteSourceForUser({ userId, sourceId: source.id });
   });
 
-  it("Test Case 2: unrelated question still retrieves notebook context (or empty)", async () => {
+  it("Test Case 2: unrelated question is filtered by similarity floor", async () => {
     const source = await createIndexedSourceFromUpload({
       userId,
       notebookId,
@@ -146,17 +147,30 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
       limit: 4,
     });
 
-    // Vector search may still return nearest neighbors; prompt must remain notebook-grounded.
-    const prompt = formatRetrievedContext(chunks);
-    if (chunks.length > 0) {
-      assert.match(prompt, /not present in the notebook sources/i);
-      assert.ok(chunks.every((chunk) => chunk.sourceId === source.id));
-    }
+    // Low-similarity nearest neighbors must not be injected as grounded context.
+    assert.ok(
+      chunks.every((chunk) => chunk.score >= MIN_RETRIEVAL_SCORE),
+      "chunks below similarity floor must be filtered out"
+    );
+    assert.equal(
+      chunks.length,
+      0,
+      "unrelated questions should not surface notebook chunks"
+    );
 
     await deleteSourceForUser({ userId, sourceId: source.id });
   });
 
   it("Test Case 3: delete source → retrieval returns nothing", async () => {
+    // Isolate from leftover sources if an earlier case failed mid-run.
+    const leftovers = await prisma.source.findMany({
+      where: { notebookId },
+      select: { id: true },
+    });
+    for (const leftover of leftovers) {
+      await deleteSourceForUser({ userId, sourceId: leftover.id });
+    }
+
     const source = await createIndexedSourceFromUpload({
       userId,
       notebookId,
@@ -175,7 +189,7 @@ describe("notebook RAG pipeline e2e", { skip: !hasDatabase || !hasOpenAI }, () =
     const chunks = await retrieveRelevantChunks({
       conversationId: conversation.id,
       notebookId,
-      query: "What is this document about?",
+      query: "quantum entanglement particles",
       limit: 4,
     });
     assert.equal(chunks.length, 0);

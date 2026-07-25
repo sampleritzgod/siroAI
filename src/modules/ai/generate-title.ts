@@ -57,7 +57,7 @@ export async function generateConversationTitle(input: {
       where: {
         id: input.conversationId,
         userId: input.userId,
-        notebook: { userId: input.userId },
+        notebook: { userId: input.userId, deletedAt: null },
       },
       select: { id: true, title: true },
     });
@@ -86,7 +86,7 @@ export async function generateConversationTitle(input: {
       where: {
         id: input.conversationId,
         userId: input.userId,
-        notebook: { userId: input.userId },
+        notebook: { userId: input.userId, deletedAt: null },
       },
       select: { title: true },
     });

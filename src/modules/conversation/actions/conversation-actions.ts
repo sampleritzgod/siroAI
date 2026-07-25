@@ -156,7 +156,7 @@ export async function getConversation(conversationId: string) {
     where: {
       id: conversationId,
       userId: user.id,
-      notebook: { userId: user.id },
+      notebook: { userId: user.id, deletedAt: null },
     },
     include: {
       activeBranch: true,

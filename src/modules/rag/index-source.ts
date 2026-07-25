@@ -211,12 +211,18 @@ function indexableSourceText(
 ): string | null {
   if (!extractedText) return null;
 
-  // Vision-fallback PDFs: only index accompanying extractable text, if any.
+  // Vision-fallback notes are not real document text — never embed them.
   if (extractedText.startsWith("SIRO_PDF_VISION:")) {
     const newline = extractedText.indexOf("\n");
     const remainder =
       newline === -1 ? "" : extractedText.slice(newline).trim();
-    return remainder.length > 0 ? remainder : null;
+    if (
+      !remainder ||
+      remainder.startsWith("[PDF has no extractable text layer")
+    ) {
+      return null;
+    }
+    return remainder;
   }
 
   const trimmed = extractedText.trim();

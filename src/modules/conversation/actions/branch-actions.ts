@@ -28,7 +28,7 @@ async function assertOwnsBranch(branchId: string, userId: string) {
       id: branchId,
       conversation: {
         userId,
-        notebook: { userId },
+        notebook: { userId, deletedAt: null },
       },
     },
   });

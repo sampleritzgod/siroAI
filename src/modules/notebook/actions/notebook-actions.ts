@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/db";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import {
   createNotebookForUser,
@@ -111,31 +110,4 @@ export async function restoreNotebook(id: string): Promise<NotebookRecord> {
   });
   revalidatePath("/");
   return notebook;
-}
-
-/**
- * Counts embedded document chunks for conversations in a notebook.
- * Read-only dashboard metric — does not change indexing or RAG behavior.
- */
-export async function getNotebookIndexedChunkCount(
-  notebookId: string
-): Promise<number> {
-  const user = await requireUser();
-
-  const notebook = await getNotebookForUser({
-    userId: user.id,
-    notebookId,
-  });
-  if (!notebook) {
-    throw new Error("Notebook not found");
-  }
-
-  return prisma.documentChunk.count({
-    where: {
-      conversation: {
-        notebookId,
-        userId: user.id,
-      },
-    },
-  });
 }
