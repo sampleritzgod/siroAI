@@ -4,9 +4,11 @@ import { captureException, logger } from "@/lib/logger";
 import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import { formatSourceUploadError } from "@/modules/source/constants";
+import { isYoutubeUrl } from "@/modules/source/fetch-youtube";
 import {
   createSourceFromUpload,
   createSourceFromWebsite,
+  createSourceFromYoutube,
   finalizeSourceIndexing,
 } from "@/modules/source/service";
 
@@ -27,6 +29,7 @@ function sourceResponse(source: {
   mimeType: string;
   fileSize: number;
   url?: string | null;
+  metadata?: unknown;
   extractedText: string | null;
   indexingStatus: string;
 }) {
@@ -39,6 +42,7 @@ function sourceResponse(source: {
     mimeType: source.mimeType,
     fileSize: source.fileSize,
     url: source.url ?? null,
+    metadata: source.metadata ?? null,
     indexingStatus: source.indexingStatus,
     hasExtractedText: Boolean(source.extractedText),
     indexing: "queued",
@@ -55,7 +59,7 @@ function mapUploadError(message: string) {
   if (/already added/i.test(message)) {
     return jsonError(message, 409);
   }
-  if (/invalid url/i.test(message)) {
+  if (/invalid youtube url|unsupported youtube url|invalid url/i.test(message)) {
     return jsonError(message, 400);
   }
   if (/unsupported file type|unsupported content type/i.test(message)) {
@@ -65,7 +69,7 @@ function mapUploadError(message: string) {
     return jsonError(message, 413);
   }
   if (
-    /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced|empty website|website unreachable|website fetch timed out|timed out/i.test(
+    /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced|empty website|website unreachable|website fetch timed out|timed out|no transcript|youtube video|private or restricted|youtube transcript/i.test(
       message
     )
   ) {
@@ -81,10 +85,27 @@ function mapUploadError(message: string) {
   return jsonError(message, 500);
 }
 
+async function queueIndexing(source: { id: string; notebookId: string }) {
+  after(async () => {
+    try {
+      await finalizeSourceIndexing({
+        sourceId: source.id,
+        notebookId: source.notebookId,
+      });
+    } catch (error) {
+      await captureException(error, {
+        stage: "source_index",
+        sourceId: source.id,
+        notebookId: source.notebookId,
+      });
+    }
+  });
+}
+
 /**
  * POST /api/sources
  * - multipart/form-data: file + notebookId (PDF / text)
- * - application/json: { notebookId, url } (website)
+ * - application/json: { notebookId, url } (website or YouTube)
  * Fast path returns PROCESSING; after() runs chunk/embed → INDEXED.
  */
 export async function POST(req: Request) {
@@ -117,7 +138,7 @@ export async function POST(req: Request) {
 
     let notebookId = "";
     let file: File | null = null;
-    let websiteUrl: string | null = null;
+    let remoteUrl: string | null = null;
 
     if (isJson) {
       let body: { notebookId?: string; url?: string };
@@ -127,8 +148,8 @@ export async function POST(req: Request) {
         return jsonError("Invalid JSON body", 400);
       }
       notebookId = String(body.notebookId ?? "").trim();
-      websiteUrl = String(body.url ?? "").trim() || null;
-      if (!websiteUrl) {
+      remoteUrl = String(body.url ?? "").trim() || null;
+      if (!remoteUrl) {
         return jsonError("url is required", 400);
       }
     } else {
@@ -144,7 +165,7 @@ export async function POST(req: Request) {
       const formFile = form.get("file");
 
       if (formUrl) {
-        websiteUrl = formUrl;
+        remoteUrl = formUrl;
       } else if (formFile instanceof File) {
         file = formFile;
       } else {
@@ -165,34 +186,35 @@ export async function POST(req: Request) {
       return jsonError("Notebook not found", 404);
     }
 
-    if (websiteUrl) {
+    if (remoteUrl) {
+      if (isYoutubeUrl(remoteUrl)) {
+        logger.info("[UPLOAD] api_received_youtube", {
+          userId: user.id,
+          notebookId,
+          url: remoteUrl,
+        });
+
+        const source = await createSourceFromYoutube({
+          userId: user.id,
+          notebookId,
+          url: remoteUrl,
+        });
+        await queueIndexing(source);
+        return sourceResponse(source);
+      }
+
       logger.info("[UPLOAD] api_received_website", {
         userId: user.id,
         notebookId,
-        url: websiteUrl,
+        url: remoteUrl,
       });
 
       const source = await createSourceFromWebsite({
         userId: user.id,
         notebookId,
-        url: websiteUrl,
+        url: remoteUrl,
       });
-
-      after(async () => {
-        try {
-          await finalizeSourceIndexing({
-            sourceId: source.id,
-            notebookId: source.notebookId,
-          });
-        } catch (error) {
-          await captureException(error, {
-            stage: "source_index",
-            sourceId: source.id,
-            notebookId: source.notebookId,
-          });
-        }
-      });
-
+      await queueIndexing(source);
       return sourceResponse(source);
     }
 
@@ -213,22 +235,7 @@ export async function POST(req: Request) {
       notebookId,
       file,
     });
-
-    after(async () => {
-      try {
-        await finalizeSourceIndexing({
-          sourceId: source.id,
-          notebookId: source.notebookId,
-        });
-      } catch (error) {
-        await captureException(error, {
-          stage: "source_index",
-          sourceId: source.id,
-          notebookId: source.notebookId,
-        });
-      }
-    });
-
+    await queueIndexing(source);
     return sourceResponse(source);
   } catch (error) {
     await captureException(error, { stage: "source_upload" });

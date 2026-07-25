@@ -15,6 +15,7 @@ import {
   MAX_UPLOAD_BYTES,
   SOURCE_TITLE_MAX_LENGTH,
   WEBSITE_STORAGE_PATH,
+  YOUTUBE_STORAGE_PATH,
   defaultTitleFromFilename,
   formatSourceUploadError,
   isRemoteStoragePath,
@@ -26,6 +27,12 @@ import {
   fetchWebsiteContent,
   normalizeWebsiteUrl,
 } from "@/modules/source/fetch-website";
+import {
+  fetchYoutubeContent,
+  normalizeYoutubeUrl,
+  toYoutubeMetadata,
+  type YoutubeSourceMetadata,
+} from "@/modules/source/fetch-youtube";
 
 export type SourceRecord = {
   id: string;
@@ -37,6 +44,7 @@ export type SourceRecord = {
   fileSize: number;
   storagePath: string;
   url: string | null;
+  metadata: YoutubeSourceMetadata | null;
   extractedText: string | null;
   indexingStatus: SourceIndexingStatus;
   createdAt: Date;
@@ -52,6 +60,7 @@ export type SourceListItem = {
   mimeType: string;
   fileSize: number;
   url: string | null;
+  metadata: YoutubeSourceMetadata | null;
   indexingStatus: SourceIndexingStatus;
   hasExtractedText: boolean;
   createdAt: Date;
@@ -110,6 +119,58 @@ async function failStaleProcessingSources(where: {
   });
 }
 
+function parseSourceMetadata(
+  value: unknown
+): YoutubeSourceMetadata | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.videoId !== "string") return null;
+  return {
+    videoId: record.videoId,
+    channel: typeof record.channel === "string" ? record.channel : null,
+    thumbnailUrl:
+      typeof record.thumbnailUrl === "string" ? record.thumbnailUrl : null,
+    durationSeconds:
+      typeof record.durationSeconds === "number"
+        ? record.durationSeconds
+        : null,
+  };
+}
+
+function toSourceRecord(row: {
+  id: string;
+  notebookId: string;
+  type: SourceType;
+  title: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSize: number;
+  storagePath: string;
+  url: string | null;
+  metadata: unknown;
+  extractedText: string | null;
+  indexingStatus: SourceIndexingStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}): SourceRecord {
+  return {
+    id: row.id,
+    notebookId: row.notebookId,
+    type: row.type,
+    title: row.title,
+    originalFileName: row.originalFileName,
+    mimeType: row.mimeType,
+    fileSize: row.fileSize,
+    storagePath: row.storagePath,
+    url: row.url,
+    metadata: parseSourceMetadata(row.metadata),
+    extractedText: row.extractedText,
+    indexingStatus: row.indexingStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 function toSourceListItem(row: {
   id: string;
   notebookId: string;
@@ -119,6 +180,7 @@ function toSourceListItem(row: {
   mimeType: string;
   fileSize: number;
   url: string | null;
+  metadata: unknown;
   indexingStatus: SourceIndexingStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -133,6 +195,7 @@ function toSourceListItem(row: {
     mimeType: row.mimeType,
     fileSize: row.fileSize,
     url: row.url,
+    metadata: parseSourceMetadata(row.metadata),
     indexingStatus: row.indexingStatus,
     hasExtractedText: row.hasExtractedText,
     createdAt: row.createdAt,
@@ -157,6 +220,7 @@ export async function listSourcesForNotebook(input: {
       mimeType: string;
       fileSize: number;
       url: string | null;
+      metadata: unknown;
       indexingStatus: SourceIndexingStatus;
       createdAt: Date;
       updatedAt: Date;
@@ -172,6 +236,7 @@ export async function listSourcesForNotebook(input: {
       "mimeType",
       "fileSize",
       url,
+      metadata,
       "indexingStatus",
       "createdAt",
       "updatedAt",
@@ -200,6 +265,7 @@ export async function listSourcesForUser(userId: string): Promise<SourceListItem
       mimeType: string;
       fileSize: number;
       url: string | null;
+      metadata: unknown;
       indexingStatus: SourceIndexingStatus;
       createdAt: Date;
       updatedAt: Date;
@@ -215,6 +281,7 @@ export async function listSourcesForUser(userId: string): Promise<SourceListItem
       s."mimeType",
       s."fileSize",
       s.url,
+      s.metadata,
       s."indexingStatus",
       s."createdAt",
       s."updatedAt",
@@ -236,12 +303,13 @@ export async function getSourceForUser(input: {
   userId: string;
   sourceId: string;
 }): Promise<SourceRecord | null> {
-  return prisma.source.findFirst({
+  const row = await prisma.source.findFirst({
     where: {
       id: input.sourceId,
       notebook: { userId: input.userId, deletedAt: null },
     },
   });
+  return row ? toSourceRecord(row) : null;
 }
 
 /**
@@ -427,7 +495,7 @@ export async function createSourceFromUpload(input: {
       indexing: "queued",
     });
 
-    return saved;
+    return toSourceRecord(saved);
   } catch (error) {
     uploadStage.error(error, { sourceId: pending.id });
     logger.error("[UPLOAD] failed", {
@@ -564,7 +632,7 @@ export async function createSourceFromWebsite(input: {
       chars: page.text.length,
     });
 
-    return saved;
+    return toSourceRecord(saved);
   } catch (error) {
     uploadStage.error(error);
     if (
@@ -572,6 +640,97 @@ export async function createSourceFromWebsite(input: {
       /unique|duplicate/i.test(error.message)
     ) {
       throw new Error("This website is already added to the notebook.");
+    }
+    throw new Error("Database error");
+  }
+}
+
+/**
+ * Fetch a YouTube transcript → PROCESSING.
+ * Reuses finalizeSourceIndexing for chunk → embed → INDEXED.
+ */
+export async function createSourceFromYoutube(input: {
+  userId: string;
+  notebookId: string;
+  url: string;
+}): Promise<SourceRecord> {
+  await assertNotebookOwner(input.notebookId, input.userId);
+
+  const uploadStage = stageLog("UPLOAD");
+  uploadStage.started({
+    notebookId: input.notebookId,
+    kind: "youtube",
+    url: input.url,
+  });
+
+  let normalizedUrl: string;
+  try {
+    normalizedUrl = normalizeYoutubeUrl(input.url);
+  } catch (error) {
+    uploadStage.error(error);
+    throw error instanceof Error ? error : new Error("Invalid YouTube URL");
+  }
+
+  const duplicate = await prisma.source.findFirst({
+    where: {
+      notebookId: input.notebookId,
+      type: "YOUTUBE",
+      url: normalizedUrl,
+    },
+    select: { id: true },
+  });
+
+  if (duplicate) {
+    const error = new Error(
+      "This YouTube video is already added to the notebook."
+    );
+    uploadStage.error(error);
+    throw error;
+  }
+
+  let video;
+  try {
+    video = await fetchYoutubeContent(normalizedUrl);
+  } catch (error) {
+    uploadStage.error(error);
+    throw error instanceof Error
+      ? error
+      : new Error(formatSourceUploadError(error));
+  }
+
+  try {
+    const saved = await prisma.source.create({
+      data: {
+        notebookId: input.notebookId,
+        type: "YOUTUBE",
+        title: video.title,
+        originalFileName: video.channel || video.videoId,
+        mimeType: "text/plain",
+        fileSize: video.transcriptBytes,
+        storagePath: YOUTUBE_STORAGE_PATH,
+        url: video.url,
+        metadata: toYoutubeMetadata(video),
+        extractedText: video.transcript,
+        indexingStatus: "PROCESSING",
+      },
+    });
+
+    uploadStage.completed({
+      sourceId: saved.id,
+      notebookId: saved.notebookId,
+      indexingStatus: saved.indexingStatus,
+      hasExtractedText: true,
+      indexing: "queued",
+      url: saved.url,
+      videoId: video.videoId,
+      chars: video.transcript.length,
+    });
+
+    return toSourceRecord(saved);
+  } catch (error) {
+    uploadStage.error(error);
+    if (error instanceof Error && /unique|duplicate/i.test(error.message)) {
+      throw new Error("This YouTube video is already added to the notebook.");
     }
     throw new Error("Database error");
   }
@@ -597,7 +756,7 @@ export async function finalizeSourceIndexing(input: {
   }
 
   if (source.indexingStatus === "INDEXED") {
-    return source;
+    return toSourceRecord(source);
   }
 
   if (!source.extractedText?.trim()) {
@@ -641,7 +800,7 @@ export async function finalizeSourceIndexing(input: {
       embeddingDimensions: indexed.embeddingDimensions,
     });
 
-    return saved;
+    return toSourceRecord(saved);
   } catch (error) {
     logger.error("[UPLOAD] indexing_failed", {
       sourceId: source.id,
@@ -688,6 +847,19 @@ export async function createIndexedSourceFromWebsite(input: {
   });
 }
 
+/** Test helper: YouTube fetch + finish indexing in one call. */
+export async function createIndexedSourceFromYoutube(input: {
+  userId: string;
+  notebookId: string;
+  url: string;
+}): Promise<SourceRecord> {
+  const created = await createSourceFromYoutube(input);
+  return finalizeSourceIndexing({
+    sourceId: created.id,
+    notebookId: created.notebookId,
+  });
+}
+
 export async function renameSourceForUser(input: {
   userId: string;
   sourceId: string;
@@ -708,7 +880,7 @@ export async function renameSourceForUser(input: {
   return prisma.source.update({
     where: { id: input.sourceId },
     data: { title },
-  });
+  }).then(toSourceRecord);
 }
 
 /**
@@ -726,9 +898,11 @@ export async function deleteSourceForUser(input: {
 
   if (
     source.type !== "WEBSITE" &&
+    source.type !== "YOUTUBE" &&
     source.storagePath &&
     source.storagePath !== "pending" &&
-    source.storagePath !== WEBSITE_STORAGE_PATH
+    source.storagePath !== WEBSITE_STORAGE_PATH &&
+    source.storagePath !== YOUTUBE_STORAGE_PATH
   ) {
     await deleteStoredUpload({
       objectId: source.id,

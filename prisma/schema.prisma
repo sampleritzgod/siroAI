@@ -50,6 +50,7 @@ enum SourceType {
   PDF
   TEXT
   WEBSITE
+  YOUTUBE
 }
 
 enum SourceIndexingStatus {
@@ -60,7 +61,8 @@ enum SourceIndexingStatus {
 }
 
 /**
- * Notebook knowledge source (PDF / plain text / website). Separate from chat Attachments.
+ * Notebook knowledge source (PDF / plain text / website / YouTube).
+ * Separate from chat Attachments.
  */
 model Source {
   id               String               @id @default(cuid())
@@ -71,8 +73,13 @@ model Source {
   mimeType         String
   fileSize         Int
   storagePath      String
-  /** Canonical page URL for WEBSITE sources. Null for file uploads. */
+  /** Canonical URL for WEBSITE / YOUTUBE sources. Null for file uploads. */
   url              String?
+  /**
+   * Optional structured metadata (e.g. YouTube channel, thumbnail, duration).
+   * Shape is source-type specific; see YoutubeSourceMetadata.
+   */
+  metadata         Json?
   extractedText    String?              @db.Text
   indexingStatus   SourceIndexingStatus @default(PENDING)
   createdAt        DateTime             @default(now())

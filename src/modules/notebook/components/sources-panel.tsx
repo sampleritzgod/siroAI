@@ -301,7 +301,9 @@ export function SourcesPanel({
                               ? "📄 "
                               : source.type === "WEBSITE"
                                 ? "🔗 "
-                                : "📝 "}
+                                : source.type === "YOUTUBE"
+                                  ? "▶ "
+                                  : "📝 "}
                           </span>
                           {source.title}
                         </p>

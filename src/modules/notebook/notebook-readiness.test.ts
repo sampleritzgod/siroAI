@@ -19,6 +19,7 @@ function source(
     mimeType: "text/plain",
     fileSize: 10,
     url: null,
+    metadata: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,

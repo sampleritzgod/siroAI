@@ -32,10 +32,26 @@ export function SourceMetadataDialog({
     { label: "Title", value: source.title },
     { label: "Type", value: source.type },
     {
-      label: source.type === "WEBSITE" ? "Host" : "File name",
+      label:
+        source.type === "WEBSITE"
+          ? "Host"
+          : source.type === "YOUTUBE"
+            ? "Channel"
+            : "File name",
       value: source.originalFileName,
     },
     ...(source.url ? [{ label: "URL", value: source.url }] : []),
+    ...(source.metadata?.thumbnailUrl
+      ? [{ label: "Thumbnail", value: source.metadata.thumbnailUrl }]
+      : []),
+    ...(source.metadata?.durationSeconds != null
+      ? [
+          {
+            label: "Duration",
+            value: formatDuration(source.metadata.durationSeconds),
+          },
+        ]
+      : []),
     { label: "MIME type", value: source.mimeType },
     { label: "Size", value: formatBytes(source.fileSize) },
     { label: "Status", value: formatIndexingStatus(source.indexingStatus) },
@@ -101,6 +117,17 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function formatDate(value: Date | string): string {

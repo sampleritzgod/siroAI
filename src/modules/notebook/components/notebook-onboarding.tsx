@@ -12,8 +12,9 @@ export function NotebookOnboarding({ onAddSource }: NotebookOnboardingProps) {
           This notebook is empty.
         </h2>
         <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
-          Add a PDF, text file, or website. Chat opens automatically once it
-          finishes indexing — you do not need to click New Chat.
+          Add a PDF, text file, website, or YouTube video. Chat opens
+          automatically once it finishes indexing — you do not need to click New
+          Chat.
         </p>
 
         <div className="mt-8 grid gap-4 text-left sm:grid-cols-2">
@@ -25,6 +26,7 @@ export function NotebookOnboarding({ onAddSource }: NotebookOnboardingProps) {
               <li>✓ PDF</li>
               <li>✓ Text</li>
               <li>✓ Website</li>
+              <li>✓ YouTube</li>
             </ul>
           </div>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
@@ -32,7 +34,6 @@ export function NotebookOnboarding({ onAddSource }: NotebookOnboardingProps) {
               Coming Soon
             </p>
             <ul className="mt-2 space-y-1.5 text-sm text-[var(--muted)]">
-              <li>YouTube</li>
               <li>Audio</li>
               <li>VTT</li>
             </ul>

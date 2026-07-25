@@ -21,6 +21,12 @@ const WEBSITE_STEPS = [
   "Queuing indexing…",
 ] as const;
 
+const YOUTUBE_STEPS = [
+  "Fetching video…",
+  "Downloading transcript…",
+  "Queuing indexing…",
+] as const;
+
 type AddSourceDialogProps = {
   open: boolean;
   notebookId: string | null;
@@ -58,17 +64,23 @@ function AddSourceDialogForm({
   const titleId = useId();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<"menu" | "website">("menu");
-  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [mode, setMode] = useState<"menu" | "website" | "youtube">("menu");
+  const [remoteUrl, setRemoteUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [progressKind, setProgressKind] = useState<"file" | "website">("file");
+  const [progressKind, setProgressKind] = useState<
+    "file" | "website" | "youtube"
+  >("file");
 
   const progressSteps =
-    progressKind === "website" ? WEBSITE_STEPS : UPLOAD_STEPS;
+    progressKind === "youtube"
+      ? YOUTUBE_STEPS
+      : progressKind === "website"
+        ? WEBSITE_STEPS
+        : UPLOAD_STEPS;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -90,7 +102,7 @@ function AddSourceDialogForm({
 
     setStepIndex(0);
     const delays =
-      progressKind === "website" ? [500, 1200] : [400, 900, 1600];
+      progressKind === "file" ? [400, 900, 1600] : [500, 1200];
     const stepTimers = delays.map((delay, index) =>
       window.setTimeout(() => setStepIndex(index + 1), delay)
     );
@@ -159,12 +171,12 @@ function AddSourceDialogForm({
     }
   }
 
-  async function submitWebsite() {
+  async function submitRemoteUrl(kind: "website" | "youtube") {
     if (isUploading) return;
 
-    const url = websiteUrl.trim();
+    const url = remoteUrl.trim();
     if (!url) {
-      setError("Invalid URL");
+      setError(kind === "youtube" ? "Invalid YouTube URL" : "Invalid URL");
       return;
     }
     if (!notebookId.trim()) {
@@ -173,7 +185,7 @@ function AddSourceDialogForm({
     }
 
     setError(null);
-    setProgressKind("website");
+    setProgressKind(kind);
     setActiveLabel(url);
     setIsUploading(true);
 
@@ -186,7 +198,11 @@ function AddSourceDialogForm({
 
       await handleSourceResponse(response);
     } catch {
-      setError("Network error while fetching website");
+      setError(
+        kind === "youtube"
+          ? "Network error while fetching YouTube video"
+          : "Network error while fetching website"
+      );
     } finally {
       setIsUploading(false);
       setActiveLabel(null);
@@ -214,7 +230,7 @@ function AddSourceDialogForm({
             : response.status === 415
               ? "Unsupported file type. Only PDF and plain text are allowed."
               : response.status === 409
-                ? "This website is already added to the notebook."
+                ? "This source is already added to the notebook."
                 : response.status === 422
                   ? "Could not extract content from this source"
                   : "Unexpected server error")
@@ -245,21 +261,27 @@ function AddSourceDialogForm({
       >
         <h2 id={titleId} className="text-lg font-semibold tracking-tight">
           {isUploading
-            ? progressKind === "website"
-              ? "Adding website"
-              : "Uploading source"
-            : mode === "website"
-              ? "Add Website"
-              : "Add Source"}
+            ? progressKind === "youtube"
+              ? "Adding YouTube video"
+              : progressKind === "website"
+                ? "Adding website"
+                : "Uploading source"
+            : mode === "youtube"
+              ? "Add YouTube"
+              : mode === "website"
+                ? "Add Website"
+                : "Add Source"}
         </h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
           {isUploading
             ? activeLabel
               ? `Working on “${activeLabel}”…`
               : "Please wait…"
-            : mode === "website"
-              ? "Paste a public page URL. Readable text will be indexed for chat."
-              : "Upload a PDF or text file, or add a website URL."}
+            : mode === "youtube"
+              ? "Paste a youtube.com or youtu.be link. The transcript will be indexed for chat."
+              : mode === "website"
+                ? "Paste a public page URL. Readable text will be indexed for chat."
+                : "Upload a PDF or text file, or add a website / YouTube URL."}
         </p>
 
         {isUploading ? (
@@ -280,7 +302,7 @@ function AddSourceDialogForm({
                 <p className="text-xs text-[var(--muted)]">
                   {elapsedSec < 1
                     ? "Starting…"
-                    : `${elapsedSec}s elapsed · usually under 15s`}
+                    : `${elapsedSec}s elapsed · usually under 20s`}
                 </p>
               </div>
             </div>
@@ -318,23 +340,27 @@ function AddSourceDialogForm({
               })}
             </ol>
           </div>
-        ) : mode === "website" ? (
+        ) : mode === "website" || mode === "youtube" ? (
           <form
             className="mt-4 flex flex-col gap-3"
             onSubmit={(event) => {
               event.preventDefault();
-              void submitWebsite();
+              void submitRemoteUrl(mode);
             }}
           >
             <label className="text-xs font-medium text-[var(--muted)]">
-              Website URL
+              {mode === "youtube" ? "YouTube URL" : "Website URL"}
               <input
                 type="url"
                 inputMode="url"
                 autoFocus
-                placeholder="https://example.com/article"
-                value={websiteUrl}
-                onChange={(event) => setWebsiteUrl(event.target.value)}
+                placeholder={
+                  mode === "youtube"
+                    ? "https://www.youtube.com/watch?v=…"
+                    : "https://example.com/article"
+                }
+                value={remoteUrl}
+                onChange={(event) => setRemoteUrl(event.target.value)}
                 className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm text-[var(--foreground)] outline-none ring-[var(--accent)] focus:ring-2"
               />
             </label>
@@ -342,12 +368,13 @@ function AddSourceDialogForm({
               type="submit"
               className="rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white hover:opacity-90"
             >
-              Add Website
+              {mode === "youtube" ? "Add YouTube" : "Add Website"}
             </button>
             <button
               type="button"
               onClick={() => {
                 setMode("menu");
+                setRemoteUrl("");
                 setError(null);
               }}
               className="text-left text-xs text-[var(--muted)] hover:text-[var(--foreground)]"
@@ -396,16 +423,28 @@ function AddSourceDialogForm({
               type="button"
               onClick={() => {
                 setMode("website");
+                setRemoteUrl("");
                 setError(null);
               }}
               className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
             >
               Add Website
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("youtube");
+                setRemoteUrl("");
+                setError(null);
+              }}
+              className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
+            >
+              Add YouTube
+            </button>
 
             <p className="text-[11px] text-[var(--muted)]">
-              Files: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")} · Websites: public
-              http(s) pages
+              Files: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")} · Websites &amp;
+              YouTube: public http(s) links
             </p>
           </div>
         )}
