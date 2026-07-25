@@ -28,11 +28,14 @@ import {
 import { CreateNotebookDialog } from "@/modules/notebook/components/create-notebook-dialog";
 import { DeleteNotebookDialog } from "@/modules/notebook/components/delete-notebook-dialog";
 import { NotebookEmptyState } from "@/modules/notebook/components/notebook-empty-state";
+import type { SourceListItem } from "@/modules/source/actions/source-actions";
+import { SourceListSection } from "@/modules/source/components/source-list-section";
 
 type NotebookSidebarProps = {
   notebooks: NotebookListItem[];
   conversations: ConversationListItem[];
   archivedConversations?: ConversationListItem[];
+  sources: SourceListItem[];
   activeNotebookId: string | null;
   onActiveNotebookChange: (notebookId: string | null) => void;
   onRequestCreateNotebook: () => void;
@@ -42,6 +45,7 @@ export function NotebookSidebar({
   notebooks,
   conversations,
   archivedConversations = [],
+  sources,
   activeNotebookId,
   onActiveNotebookChange,
   onRequestCreateNotebook,
@@ -74,6 +78,14 @@ export function NotebookSidebar({
           )
         : [],
     [archivedConversations, activeNotebookId]
+  );
+
+  const scopedSources = useMemo(
+    () =>
+      activeNotebookId
+        ? sources.filter((item) => item.notebookId === activeNotebookId)
+        : [],
+    [sources, activeNotebookId]
   );
 
   function selectNotebook(notebookId: string) {
@@ -305,15 +317,22 @@ export function NotebookSidebar({
           </div>
 
           {activeNotebookId ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-1 border-t border-[var(--border)] pt-3">
-              <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-                Conversations
-              </p>
-              <ConversationListSection
-                conversations={scopedConversations}
-                archivedConversations={scopedArchived}
-                onNavigate={close}
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain border-t border-[var(--border)] pt-3">
+              <SourceListSection
+                notebookId={activeNotebookId}
+                sources={scopedSources}
               />
+
+              <div className="flex min-h-0 flex-col gap-1 border-t border-[var(--border)] pt-3">
+                <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+                  Conversations
+                </p>
+                <ConversationListSection
+                  conversations={scopedConversations}
+                  archivedConversations={scopedArchived}
+                  onNavigate={close}
+                />
+              </div>
             </div>
           ) : null}
         </div>
@@ -370,6 +389,7 @@ type NotebookShellProps = {
   notebooks: NotebookListItem[];
   conversations: ConversationListItem[];
   archivedConversations?: ConversationListItem[];
+  sources: SourceListItem[];
   children: React.ReactNode;
 };
 
@@ -380,6 +400,7 @@ export function NotebookAppShell({
   notebooks,
   conversations,
   archivedConversations = [],
+  sources,
   children,
 }: NotebookShellProps) {
   const pathname = usePathname();
@@ -420,6 +441,7 @@ export function NotebookAppShell({
         notebooks={notebooks}
         conversations={conversations}
         archivedConversations={archivedConversations}
+        sources={sources}
         activeNotebookId={activeNotebookId}
         onActiveNotebookChange={(notebookId) => {
           if (notebookId) {

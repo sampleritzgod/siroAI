@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { put } from "@vercel/blob";
+import { del, put } from "@vercel/blob";
 import type { AttachmentStorage } from "@/generated/prisma/client";
 
 const LOCAL_ROOT = path.join(process.cwd(), ".data", "uploads");
@@ -82,6 +82,36 @@ export async function readLocalUpload(storageKey: string): Promise<Buffer> {
     throw new Error("Invalid storage key");
   }
   return readFile(resolved);
+}
+
+/**
+ * Removes a stored upload (local directory or Vercel Blob URL).
+ * Used by notebook sources; safe to call for attachment ids too.
+ */
+export async function deleteStoredUpload(input: {
+  objectId: string;
+  storage: AttachmentStorage;
+  storageKey: string;
+}): Promise<void> {
+  if (input.storage === "VERCEL_BLOB") {
+    if (!isVercelBlobConfigured()) return;
+    try {
+      await del(input.storageKey, {
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+    } catch {
+      // Blob may already be gone; continue.
+    }
+    return;
+  }
+
+  const dir = getLocalAttachmentDir(input.objectId);
+  const resolved = path.resolve(dir);
+  if (!resolved.startsWith(path.resolve(LOCAL_ROOT))) {
+    throw new Error("Invalid storage key");
+  }
+
+  await rm(resolved, { recursive: true, force: true });
 }
 
 function sanitizeFilename(filename: string) {

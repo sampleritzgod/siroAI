@@ -36,9 +36,45 @@ model Notebook {
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  sources       Source[]
 
   @@index([userId, updatedAt(sort: Desc)])
   @@index([userId, title])
+}
+
+enum SourceType {
+  PDF
+  TEXT
+}
+
+enum SourceIndexingStatus {
+  PENDING
+  PROCESSING
+  INDEXED
+  FAILED
+}
+
+/**
+ * Notebook knowledge source (PDF / plain text). Separate from chat Attachments.
+ */
+model Source {
+  id               String               @id @default(cuid())
+  notebookId       String
+  type             SourceType
+  title            String
+  originalFileName String
+  mimeType         String
+  fileSize         Int
+  storagePath      String
+  extractedText    String?              @db.Text
+  indexingStatus   SourceIndexingStatus @default(PENDING)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  notebook Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+
+  @@index([notebookId, createdAt(sort: Desc)])
+  @@index([notebookId, indexingStatus])
 }
 
 model Conversation {
