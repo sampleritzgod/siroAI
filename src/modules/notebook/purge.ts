@@ -1,10 +1,9 @@
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { deleteStoredUpload } from "@/modules/files/storage";
+import { deleteStoredUpload, resolveStorageFromPath } from "@/modules/files/storage";
 import {
   WEBSITE_STORAGE_PATH,
   YOUTUBE_STORAGE_PATH,
-  isRemoteStoragePath,
 } from "@/modules/source/constants";
 import {
   enqueueJob,
@@ -114,9 +113,7 @@ export async function hardPurgeNotebook(notebookId: string): Promise<{
     try {
       await deleteStoredUpload({
         objectId: source.id,
-        storage: isRemoteStoragePath(source.storagePath)
-          ? "VERCEL_BLOB"
-          : "LOCAL",
+        storage: resolveStorageFromPath(source.storagePath),
         storageKey: source.storagePath,
       });
       blobBytesFreed += source.fileSize;

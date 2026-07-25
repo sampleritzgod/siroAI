@@ -8,7 +8,10 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { isImageMediaType } from "@/modules/files/constants";
 import { parsePdfVisionPayload } from "@/modules/files/extract-text";
-import { readLocalUpload } from "@/modules/files/storage";
+import {
+  readLocalUpload,
+  readStoredUploadBytes,
+} from "@/modules/files/storage";
 
 function attachmentIdFromUrl(url: string): string | null {
   try {
@@ -53,9 +56,23 @@ async function resolveLocalFileUrl(
     select: { storage: true, storageKey: true, mediaType: true },
   });
 
-  if (!attachment || attachment.storage !== "LOCAL") return url;
-  const bytes = await readLocalUpload(attachment.storageKey);
-  return toDataUrl(attachment.mediaType || mediaType, bytes);
+  if (!attachment) return url;
+
+  if (attachment.storage === "LOCAL") {
+    const bytes = await readLocalUpload(attachment.storageKey);
+    return toDataUrl(attachment.mediaType || mediaType, bytes);
+  }
+
+  // Providers cannot call our authenticated /api/files — inline small assets.
+  try {
+    const bytes = await readStoredUploadBytes({
+      storage: attachment.storage,
+      storageKey: attachment.storageKey,
+    });
+    return toDataUrl(attachment.mediaType || mediaType, bytes);
+  } catch {
+    return url;
+  }
 }
 
 /**

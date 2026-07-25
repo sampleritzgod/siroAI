@@ -196,6 +196,7 @@ enum AttachmentStatus {
 enum AttachmentStorage {
   LOCAL
   VERCEL_BLOB
+  S3
 }
 
 /**

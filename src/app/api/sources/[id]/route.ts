@@ -1,9 +1,9 @@
 import { requireUser } from "@/modules/auth/actions/require-user";
-import { readBlobUpload, readLocalUpload } from "@/modules/files/storage";
 import {
-  isRemoteStoragePath,
-  isSentinelStoragePath,
-} from "@/modules/source/constants";
+  readStoredUpload,
+  resolveStorageFromPath,
+} from "@/modules/files/storage";
+import { isSentinelStoragePath } from "@/modules/source/constants";
 import { getSourceForUser } from "@/modules/source/service";
 
 type RouteContext = {
@@ -33,33 +33,23 @@ export async function GET(_req: Request, context: RouteContext) {
       return Response.json({ error: "Source not found" }, { status: 404 });
     }
 
-    if (isRemoteStoragePath(source.storagePath)) {
-      try {
-        const blob = await readBlobUpload(source.storagePath);
-        return new Response(blob.stream, {
-          status: 200,
-          headers: {
-            "Content-Type": blob.contentType || source.mimeType,
-            "Content-Disposition": `inline; filename="${source.originalFileName.replace(/"/g, "")}"`,
-            "Cache-Control": "private, max-age=3600",
-          },
-        });
-      } catch {
-        return Response.json({ error: "Source not found" }, { status: 404 });
-      }
-    }
-
-    const bytes = await readLocalUpload(source.storagePath);
-
-    return new Response(new Uint8Array(bytes), {
-      status: 200,
-      headers: {
-        "Content-Type": source.mimeType,
-        "Content-Length": String(bytes.length),
+    try {
+      const object = await readStoredUpload({
+        storage: resolveStorageFromPath(source.storagePath),
+        storageKey: source.storagePath,
+      });
+      const headers: Record<string, string> = {
+        "Content-Type": object.contentType || source.mimeType,
         "Content-Disposition": `inline; filename="${source.originalFileName.replace(/"/g, "")}"`,
         "Cache-Control": "private, max-age=3600",
-      },
-    });
+      };
+      if (typeof object.contentLength === "number") {
+        headers["Content-Length"] = String(object.contentLength);
+      }
+      return new Response(object.stream, { status: 200, headers });
+    } catch {
+      return Response.json({ error: "Source not found" }, { status: 404 });
+    }
   } catch (error) {
     console.error("[api/sources GET]", error);
     const message =

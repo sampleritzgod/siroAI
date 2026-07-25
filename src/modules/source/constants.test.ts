@@ -33,6 +33,7 @@ describe("source constants", () => {
   it("detects remote storage paths", () => {
     assert.equal(isRemoteStoragePath("https://blob.example/file"), true);
     assert.equal(isRemoteStoragePath("abc/file.pdf"), false);
+    assert.equal(isRemoteStoragePath("attachments/abc/file.pdf"), false);
   });
 
   it("detects sentinel storage paths", () => {

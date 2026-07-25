@@ -19,8 +19,13 @@ export const env = createEnv({
     /** Optional — Upstash Redis for cache + rate limits. */
     UPSTASH_REDIS_REST_URL: z.url().optional(),
     UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
-    /** Optional — Vercel Blob for cloud file storage (local disk fallback otherwise). */
+    /** Optional — Vercel Blob (legacy cloud storage; prefer S3). */
     BLOB_READ_WRITE_TOKEN: z.string().min(1).optional(),
+    /** Amazon S3 (preferred cloud storage for uploads). */
+    AWS_REGION: z.string().min(1).optional(),
+    AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
+    AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    AWS_S3_BUCKET: z.string().min(1).optional(),
     /** Optional — Sentry DSN for exception capture. */
     SENTRY_DSN: z.url().optional(),
     /**
@@ -45,6 +50,10 @@ export const env = createEnv({
     UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
     UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
+    AWS_REGION: process.env.AWS_REGION,
+    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+    AWS_S3_BUCKET: process.env.AWS_S3_BUCKET,
     SENTRY_DSN: process.env.SENTRY_DSN,
     SUPADATA_API_KEY: process.env.SUPADATA_API_KEY,
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:

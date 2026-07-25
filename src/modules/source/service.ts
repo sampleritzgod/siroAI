@@ -7,6 +7,7 @@ import { logger } from "@/lib/logger";
 import { extractAttachmentContent } from "@/modules/files/extract-text";
 import {
   deleteStoredUpload,
+  resolveStorageFromPath,
   storeUpload,
 } from "@/modules/files/storage";
 import { indexSourceForRag } from "@/modules/rag/index-source";
@@ -18,7 +19,6 @@ import {
   YOUTUBE_STORAGE_PATH,
   defaultTitleFromFilename,
   formatSourceUploadError,
-  isRemoteStoragePath,
   resolveSourceMediaType,
   sourceTypeFromMediaType,
 } from "@/modules/source/constants";
@@ -523,7 +523,6 @@ export async function createSourceFromUpload(input: {
   }
 
   let storedKey: string | null = null;
-  let storedRemote = false;
 
   try {
     const storeStage = stageLog("STORE");
@@ -535,7 +534,6 @@ export async function createSourceFromUpload(input: {
       bytes,
     });
     storedKey = stored.storageKey;
-    storedRemote = stored.storage === "VERCEL_BLOB";
     storeStage.completed({
       sourceId: pending.id,
       storage: stored.storage,
@@ -636,7 +634,7 @@ export async function createSourceFromUpload(input: {
       try {
         await deleteStoredUpload({
           objectId: pending.id,
-          storage: storedRemote ? "VERCEL_BLOB" : "LOCAL",
+          storage: resolveStorageFromPath(storedKey),
           storageKey: storedKey,
         });
         logger.info("[STORE] cleanup_complete", { sourceId: pending.id });
@@ -1037,9 +1035,7 @@ export async function deleteSourceForUser(input: {
   ) {
     await deleteStoredUpload({
       objectId: source.id,
-      storage: isRemoteStoragePath(source.storagePath)
-        ? "VERCEL_BLOB"
-        : "LOCAL",
+      storage: resolveStorageFromPath(source.storagePath),
       storageKey: source.storagePath,
     });
   }

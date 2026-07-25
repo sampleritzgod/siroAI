@@ -24,10 +24,19 @@ export async function register() {
     missing.push("UPSTASH_REDIS_REST_URL/TOKEN");
   }
   if (
-    !process.env.BLOB_READ_WRITE_TOKEN?.trim() &&
-    !process.env.BLOB_STORE_ID?.trim()
+    !process.env.AWS_S3_BUCKET?.trim() ||
+    !process.env.AWS_REGION?.trim() ||
+    !process.env.AWS_ACCESS_KEY_ID?.trim() ||
+    !process.env.AWS_SECRET_ACCESS_KEY?.trim()
   ) {
-    missing.push("BLOB_READ_WRITE_TOKEN or BLOB_STORE_ID");
+    if (
+      !process.env.BLOB_READ_WRITE_TOKEN?.trim() &&
+      !process.env.BLOB_STORE_ID?.trim()
+    ) {
+      missing.push(
+        "AWS_S3_BUCKET (+ AWS_REGION/AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) or BLOB_READ_WRITE_TOKEN/BLOB_STORE_ID"
+      );
+    }
   }
   if (!process.env.CRON_SECRET?.trim()) missing.push("CRON_SECRET");
 

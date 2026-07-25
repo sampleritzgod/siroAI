@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/modules/auth/actions/require-user";
-import { readBlobUpload, readLocalUpload } from "@/modules/files/storage";
+import { readStoredUpload } from "@/modules/files/storage";
 import { toErrorResponse, unauthorized } from "@/lib/errors";
 
 type RouteContext = {
@@ -34,36 +34,26 @@ export async function GET(_req: Request, context: RouteContext) {
       );
     }
 
-    if (attachment.storage === "VERCEL_BLOB") {
-      try {
-        const blob = await readBlobUpload(attachment.storageKey);
-        return new Response(blob.stream, {
-          status: 200,
-          headers: {
-            "Content-Type": blob.contentType || attachment.mediaType,
-            "Content-Disposition": `inline; filename="${attachment.filename.replace(/"/g, "")}"`,
-            "Cache-Control": "private, max-age=3600",
-          },
-        });
-      } catch {
-        return Response.json(
-          { error: "File not found", code: "NOT_FOUND" },
-          { status: 404 }
-        );
-      }
-    }
-
-    const bytes = await readLocalUpload(attachment.storageKey);
-
-    return new Response(new Uint8Array(bytes), {
-      status: 200,
-      headers: {
-        "Content-Type": attachment.mediaType,
-        "Content-Length": String(bytes.length),
+    try {
+      const object = await readStoredUpload({
+        storage: attachment.storage,
+        storageKey: attachment.storageKey,
+      });
+      const headers: Record<string, string> = {
+        "Content-Type": object.contentType || attachment.mediaType,
         "Content-Disposition": `inline; filename="${attachment.filename.replace(/"/g, "")}"`,
         "Cache-Control": "private, max-age=3600",
-      },
-    });
+      };
+      if (typeof object.contentLength === "number") {
+        headers["Content-Length"] = String(object.contentLength);
+      }
+      return new Response(object.stream, { status: 200, headers });
+    } catch {
+      return Response.json(
+        { error: "File not found", code: "NOT_FOUND" },
+        { status: 404 }
+      );
+    }
   } catch (error) {
     console.error("[api/files GET]", error);
     const message =
