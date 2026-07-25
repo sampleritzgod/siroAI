@@ -31,7 +31,7 @@ type NotebookShellProps = {
 };
 
 /**
- * NotebookLM-style shell: Sources | Chat | Studio for the active notebook.
+ * NotebookLM-style shell: Sources | Chat for the active notebook.
  */
 export function NotebookAppShell({
   notebooks,
@@ -95,6 +95,10 @@ export function NotebookAppShell({
   const isWorkspaceRoute = pathname === "/" || pathname.startsWith("/c/");
 
   function selectNotebook(notebookId: string) {
+    // Already reading this notebook — don't bounce through notebook home just
+    // to re-open the same chat.
+    if (notebookId === activeNotebookId && pathname.startsWith("/c/")) return;
+
     writeActiveNotebookId(notebookId);
     // Always return to notebook home so the workspace resumes that notebook's chat.
     router.push("/");

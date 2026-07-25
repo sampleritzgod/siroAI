@@ -17,27 +17,15 @@ export function NotebookOnboarding({ onAddSource }: NotebookOnboardingProps) {
           Chat.
         </p>
 
-        <div className="mt-8 grid gap-4 text-left sm:grid-cols-2">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-[var(--muted)]">
-              Supported today
-            </p>
-            <ul className="mt-2 space-y-1.5 text-sm">
-              <li>✓ PDF</li>
-              <li>✓ Text</li>
-              <li>✓ Website</li>
-              <li>✓ YouTube</li>
-            </ul>
-          </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-[var(--muted)]">
-              Coming Soon
-            </p>
-            <ul className="mt-2 space-y-1.5 text-sm text-[var(--muted)]">
-              <li>Audio</li>
-              <li>VTT</li>
-            </ul>
-          </div>
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+          {["PDF", "Text", "VTT", "Website", "YouTube"].map((type) => (
+            <span
+              key={type}
+              className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs font-medium text-[var(--muted)]"
+            >
+              {type}
+            </span>
+          ))}
         </div>
 
         <button

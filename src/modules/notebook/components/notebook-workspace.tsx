@@ -8,7 +8,6 @@ import { createConversation } from "@/modules/conversation/actions/conversation-
 import { NotebookIndexingStatus } from "@/modules/notebook/components/notebook-indexing-status";
 import { NotebookOnboarding } from "@/modules/notebook/components/notebook-onboarding";
 import { SourcesPanel } from "@/modules/notebook/components/sources-panel";
-import { StudioPanel } from "@/modules/notebook/components/studio-panel";
 import {
   isNotebookIndexing,
   isNotebookReady,
@@ -17,7 +16,7 @@ import type { NotebookListItem } from "@/modules/notebook/service";
 import { AddSourceDialog } from "@/modules/source/components/add-source-dialog";
 import type { SourceListItem } from "@/modules/source/service";
 
-type MobilePanel = "sources" | "chat" | "studio";
+type MobilePanel = "sources" | "chat";
 
 type NotebookWorkspaceProps = {
   notebook: NotebookListItem;
@@ -47,7 +46,11 @@ export function NotebookWorkspace({
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
   const [openingChat, setOpeningChat] = useState(false);
   const [openChatError, setOpenChatError] = useState<string | null>(null);
-  const autoOpenAttempted = useRef<string | null>(null);
+  // Re-armed on route/notebook change so returning to a notebook resumes its
+  // chat again instead of leaving a permanent "Loading chat…" spinner.
+  const resumeAttempt = useRef<string | null>(null);
+  // Never re-armed: at most one auto-created chat per notebook per session.
+  const autoCreated = useRef(new Set<string>());
   // Force chat panel on conversation routes without a setState-in-effect.
   const activeMobilePanel: MobilePanel =
     ready && isChatRoute ? "chat" : mobilePanel;
@@ -66,6 +69,10 @@ export function NotebookWorkspace({
     return () => window.clearInterval(timer);
   }, [indexing, router]);
 
+  useEffect(() => {
+    resumeAttempt.current = null;
+  }, [isChatRoute, notebook.id]);
+
   // After the first source is indexed, open chat automatically.
   // Users should not need a separate "New Chat" click to start.
   useEffect(() => {
@@ -78,14 +85,14 @@ export function NotebookWorkspace({
     )[0];
 
     if (latest) {
-      if (autoOpenAttempted.current === `resume:${latest.id}`) return;
-      autoOpenAttempted.current = `resume:${latest.id}`;
+      if (resumeAttempt.current === latest.id) return;
+      resumeAttempt.current = latest.id;
       router.replace(`/c/${latest.id}`);
       return;
     }
 
-    if (autoOpenAttempted.current === `create:${notebook.id}`) return;
-    autoOpenAttempted.current = `create:${notebook.id}`;
+    if (autoCreated.current.has(notebook.id)) return;
+    autoCreated.current.add(notebook.id);
     setOpeningChat(true);
     setOpenChatError(null);
 
@@ -95,7 +102,7 @@ export function NotebookWorkspace({
         router.refresh();
       })
       .catch((error) => {
-        autoOpenAttempted.current = null;
+        autoCreated.current.delete(notebook.id);
         setOpenChatError(
           error instanceof Error ? error.message : "Could not open chat"
         );
@@ -187,7 +194,6 @@ export function NotebookWorkspace({
           [
             ["sources", "Sources"],
             ["chat", "Chat"],
-            ["studio", "Studio"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -225,16 +231,6 @@ export function NotebookWorkspace({
           aria-label="Chat"
         >
           {chatContent}
-        </section>
-
-        <section
-          className={cn(
-            "relative z-0 h-full w-full shrink-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--sidebar)] lg:w-80 lg:border-l",
-            activeMobilePanel === "studio" ? "flex" : "hidden lg:flex"
-          )}
-          aria-label="Studio"
-        >
-          <StudioPanel />
         </section>
       </div>
     </div>
