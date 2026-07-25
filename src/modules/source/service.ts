@@ -110,16 +110,32 @@ async function assertSourceOwner(sourceId: string, userId: string) {
 }
 
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
+/** Avoid writing on every 1s router.refresh() while a source is indexing. */
+const STALE_SWEEP_INTERVAL_MS = 60_000;
+const lastStaleSweepAt = new Map<string, number>();
 
 /**
  * Mark sources stuck in PROCESSING longer than the timeout as FAILED.
  * Prevents the 1s refresh loop from running forever after a crashed after().
+ * Debounced so list endpoints do not UPDATE on every poll tick.
  */
 async function failStaleProcessingSources(where: {
   notebookId?: string;
   userId?: string;
 }) {
-  const cutoff = new Date(Date.now() - STALE_PROCESSING_MS);
+  const sweepKey = where.notebookId
+    ? `nb:${where.notebookId}`
+    : where.userId
+      ? `user:${where.userId}`
+      : "global";
+  const now = Date.now();
+  const last = lastStaleSweepAt.get(sweepKey) ?? 0;
+  if (now - last < STALE_SWEEP_INTERVAL_MS) {
+    return;
+  }
+  lastStaleSweepAt.set(sweepKey, now);
+
+  const cutoff = new Date(now - STALE_PROCESSING_MS);
   await prisma.source.updateMany({
     where: {
       indexingStatus: "PROCESSING",
@@ -853,7 +869,7 @@ export async function finalizeSourceIndexing(input: {
   }
 
   if (!source.extractedText?.trim()) {
-    const failed = await prisma.source.update({
+    await prisma.source.update({
       where: { id: source.id },
       data: { indexingStatus: "FAILED" },
     });

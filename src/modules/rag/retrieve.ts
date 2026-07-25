@@ -15,10 +15,21 @@ export type RetrievedChunk = {
   score: number;
 };
 
+type RawChunkRow = {
+  id: string;
+  attachmentId: string | null;
+  sourceId: string | null;
+  filename: string;
+  chunkIndex: number;
+  content: string;
+  score: number;
+};
+
 /**
  * Retrieve relevant chunks for a chat turn.
  * Searches notebook sources (primary NotebookLM path) and conversation
- * attachments (legacy per-chat uploads).
+ * attachments (legacy per-chat uploads) as separate ANN queries so Postgres
+ * can use notebookId / conversationId indexes + HNSW efficiently.
  */
 export async function retrieveRelevantChunks(input: {
   conversationId: string;
@@ -55,45 +66,60 @@ export async function retrieveRelevantChunks(input: {
     const vector = toVectorLiteral(embedding);
     const notebookId = input.notebookId ?? null;
 
-    const rows = await prisma.$queryRaw<
-      Array<{
-        id: string;
-        attachmentId: string | null;
-        sourceId: string | null;
-        filename: string;
-        chunkIndex: number;
-        content: string;
-        score: number;
-      }>
-    >`
-      SELECT
-        c.id,
-        c."attachmentId",
-        c."sourceId",
-        COALESCE(s.title, a.filename, s."originalFileName", 'document') AS filename,
-        c."chunkIndex",
-        c.content,
-        (1 - (c.embedding <=> ${vector}::vector))::float8 AS score
-      FROM "DocumentChunk" c
-      LEFT JOIN "Attachment" a ON a.id = c."attachmentId"
-      LEFT JOIN "Source" s ON s.id = c."sourceId"
-      WHERE (
-        c."conversationId" = ${input.conversationId}
-        OR (
-          ${notebookId}::text IS NOT NULL
-          AND c."notebookId" = ${notebookId}
-        )
-      )
-      ORDER BY c.embedding <=> ${vector}::vector
-      LIMIT ${limit}
-    `;
+    // Fetch a bit more from each scope, then merge + re-rank by score.
+    const perScope = Math.min(limit, 12);
 
-    const scored = rows.map((row) => ({
-      ...row,
-      score: Number(row.score),
-    }));
+    const [notebookRows, attachmentRows] = await Promise.all([
+      notebookId
+        ? prisma.$queryRaw<RawChunkRow[]>`
+            SELECT
+              c.id,
+              c."attachmentId",
+              c."sourceId",
+              COALESCE(s.title, s."originalFileName", 'document') AS filename,
+              c."chunkIndex",
+              c.content,
+              (1 - (c.embedding <=> ${vector}::vector))::float8 AS score
+            FROM "DocumentChunk" c
+            LEFT JOIN "Source" s ON s.id = c."sourceId"
+            WHERE c."notebookId" = ${notebookId}
+            ORDER BY c.embedding <=> ${vector}::vector
+            LIMIT ${perScope}
+          `
+        : Promise.resolve([] as RawChunkRow[]),
+      prisma.$queryRaw<RawChunkRow[]>`
+        SELECT
+          c.id,
+          c."attachmentId",
+          c."sourceId",
+          COALESCE(a.filename, 'document') AS filename,
+          c."chunkIndex",
+          c.content,
+          (1 - (c.embedding <=> ${vector}::vector))::float8 AS score
+        FROM "DocumentChunk" c
+        LEFT JOIN "Attachment" a ON a.id = c."attachmentId"
+        WHERE c."conversationId" = ${input.conversationId}
+        ORDER BY c.embedding <=> ${vector}::vector
+        LIMIT ${perScope}
+      `,
+    ]);
 
-    const chunks = scored.filter((chunk) => chunk.score >= minScore);
+    const byId = new Map<string, RetrievedChunk>();
+    for (const row of [...notebookRows, ...attachmentRows]) {
+      const scored: RetrievedChunk = {
+        ...row,
+        score: Number(row.score),
+      };
+      const existing = byId.get(scored.id);
+      if (!existing || scored.score > existing.score) {
+        byId.set(scored.id, scored);
+      }
+    }
+
+    const scored = [...byId.values()].sort((a, b) => b.score - a.score);
+    const chunks = scored
+      .filter((chunk) => chunk.score >= minScore)
+      .slice(0, limit);
 
     stage.completed({
       conversationId: input.conversationId,

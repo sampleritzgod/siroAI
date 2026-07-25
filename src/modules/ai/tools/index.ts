@@ -10,9 +10,15 @@ export function createChatTools(input: {
   notebookId: string;
   /** When true, skip ragSearch — context was already injected into the system prompt. */
   skipRagSearch?: boolean;
+  /**
+   * When true, skip webSearch. Used after notebook retrieval already returned
+   * context so the model does not stall on an extra Tavily round-trip.
+   * Force-web-search from the composer overrides this on the route.
+   */
+  skipWebSearch?: boolean;
 }) {
   return {
-    webSearch: webSearchTool,
+    ...(input.skipWebSearch ? {} : { webSearch: webSearchTool }),
     ...(input.skipRagSearch
       ? {}
       : { ragSearch: createRagSearchTool(input) }),

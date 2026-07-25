@@ -137,9 +137,9 @@ export async function POST(req: Request) {
       error instanceof Error ? error.message : "Internal server error";
 
     if (/unauthorized/i.test(message)) {
-      return jsonError(message, 401);
+      return jsonError("Unauthorized", 401);
     }
 
-    return jsonError(message, 500);
+    return jsonError("Something went wrong. Please try again.", 500);
   }
 }

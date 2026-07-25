@@ -89,7 +89,8 @@ function mapUploadError(message: string) {
     return jsonError(message, 500);
   }
 
-  return jsonError(message, 500);
+  // Unknown / unexpected — never leak raw exception text.
+  return jsonError("Upload failed. Please try again.", 500);
 }
 
 async function queueIndexing(source: { id: string; notebookId: string }) {

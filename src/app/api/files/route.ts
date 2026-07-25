@@ -181,9 +181,17 @@ export async function POST(req: Request) {
       error instanceof Error ? error.message : "Internal server error";
 
     if (/unauthorized/i.test(message)) {
-      return jsonError(message, 401);
+      return jsonError("Unauthorized", 401);
     }
 
-    return jsonError(message, 500);
+    if (/not found/i.test(message)) {
+      return jsonError("Conversation not found", 404);
+    }
+
+    if (/unsupported|too large|empty/i.test(message)) {
+      return jsonError(message, /too large/i.test(message) ? 413 : 400);
+    }
+
+    return jsonError("Upload failed. Please try again.", 500);
   }
 }

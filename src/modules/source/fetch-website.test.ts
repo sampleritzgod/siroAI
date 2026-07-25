@@ -37,6 +37,10 @@ describe("website URL helpers", () => {
       () => normalizeWebsiteUrl("http://192.168.1.10/"),
       /not allowed/
     );
+    assert.throws(
+      () => normalizeWebsiteUrl("http://169.254.169.254/latest/meta-data/"),
+      /not allowed/
+    );
   });
 
   it("builds titles from page title or hostname", () => {

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { del, put } from "@vercel/blob";
+import { del, get, put } from "@vercel/blob";
 import type { AttachmentStorage } from "@/generated/prisma/client";
 
 const LOCAL_ROOT = path.join(process.cwd(), ".data", "uploads");
@@ -42,6 +42,17 @@ function blobAuthOptions(): { token?: string } {
   return token ? { token } : {};
 }
 
+/** True when `candidate` resolves strictly inside `root` (prevents path traversal). */
+function isPathInsideRoot(root: string, candidate: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolved);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
 /**
  * Persist bytes to Vercel Blob when configured, otherwise local .data/uploads.
  * On Vercel, Blob is required — local disk is ephemeral and must not be used.
@@ -70,7 +81,9 @@ export async function storeUpload(input: {
       return {
         storage: "VERCEL_BLOB",
         storageKey: blob.url,
-        url: blob.url,
+        // Serve through our authenticated API — private blob URLs are not
+        // browser-accessible without a signed token.
+        url: `/api/files/${input.attachmentId}`,
       };
     } catch (error) {
       const message =
@@ -102,11 +115,33 @@ export async function storeUpload(input: {
 
 export async function readLocalUpload(storageKey: string): Promise<Buffer> {
   const absolute = path.join(LOCAL_ROOT, storageKey);
-  const resolved = path.resolve(absolute);
-  if (!resolved.startsWith(path.resolve(LOCAL_ROOT))) {
+  if (!isPathInsideRoot(LOCAL_ROOT, absolute)) {
     throw new Error("Invalid storage key");
   }
-  return readFile(resolved);
+  return readFile(path.resolve(absolute));
+}
+
+/**
+ * Stream a private Vercel Blob object through the app (auth already checked).
+ * Never 302-redirect to private blob URLs — browsers cannot fetch them.
+ */
+export async function readBlobUpload(storageKey: string): Promise<{
+  stream: ReadableStream<Uint8Array>;
+  contentType?: string;
+}> {
+  const result = await get(storageKey, {
+    access: "private",
+    ...blobAuthOptions(),
+  });
+
+  if (!result || result.statusCode !== 200 || !result.stream) {
+    throw new Error("Blob not found");
+  }
+
+  return {
+    stream: result.stream,
+    contentType: result.blob.contentType,
+  };
 }
 
 /**
@@ -131,12 +166,11 @@ export async function deleteStoredUpload(input: {
   }
 
   const dir = getLocalAttachmentDir(input.objectId);
-  const resolved = path.resolve(dir);
-  if (!resolved.startsWith(path.resolve(LOCAL_ROOT))) {
+  if (!isPathInsideRoot(LOCAL_ROOT, dir)) {
     throw new Error("Invalid storage key");
   }
 
-  await rm(resolved, { recursive: true, force: true });
+  await rm(path.resolve(dir), { recursive: true, force: true });
 }
 
 function sanitizeFilename(filename: string) {

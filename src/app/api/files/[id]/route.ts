@@ -1,14 +1,14 @@
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/modules/auth/actions/require-user";
-import { readLocalUpload } from "@/modules/files/storage";
+import { readBlobUpload, readLocalUpload } from "@/modules/files/storage";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
 /**
- * GET /api/files/[id] — stream a locally stored attachment (auth + ownership).
- * Vercel Blob attachments redirect to the public blob URL.
+ * GET /api/files/[id] — stream a stored attachment (auth + ownership).
+ * Private Vercel Blob objects are proxied through this route (never redirected).
  */
 export async function GET(_req: Request, context: RouteContext) {
   try {
@@ -24,7 +24,19 @@ export async function GET(_req: Request, context: RouteContext) {
     }
 
     if (attachment.storage === "VERCEL_BLOB") {
-      return Response.redirect(attachment.storageKey, 302);
+      try {
+        const blob = await readBlobUpload(attachment.storageKey);
+        return new Response(blob.stream, {
+          status: 200,
+          headers: {
+            "Content-Type": blob.contentType || attachment.mediaType,
+            "Content-Disposition": `inline; filename="${attachment.filename.replace(/"/g, "")}"`,
+            "Cache-Control": "private, max-age=3600",
+          },
+        });
+      } catch {
+        return Response.json({ error: "File not found" }, { status: 404 });
+      }
     }
 
     const bytes = await readLocalUpload(attachment.storageKey);
@@ -44,9 +56,9 @@ export async function GET(_req: Request, context: RouteContext) {
       error instanceof Error ? error.message : "Internal server error";
 
     if (/unauthorized/i.test(message)) {
-      return Response.json({ error: message }, { status: 401 });
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import {
   defaultTitleFromFilename,
   formatSourceUploadError,
   isRemoteStoragePath,
+  isSentinelStoragePath,
   isSourceAllowedMediaType,
   resolveSourceMediaType,
   sourceTypeFromMediaType,
@@ -32,6 +33,13 @@ describe("source constants", () => {
   it("detects remote storage paths", () => {
     assert.equal(isRemoteStoragePath("https://blob.example/file"), true);
     assert.equal(isRemoteStoragePath("abc/file.pdf"), false);
+  });
+
+  it("detects sentinel storage paths", () => {
+    assert.equal(isSentinelStoragePath("website"), true);
+    assert.equal(isSentinelStoragePath("youtube"), true);
+    assert.equal(isSentinelStoragePath("pending"), true);
+    assert.equal(isSentinelStoragePath("abc/file.pdf"), false);
   });
 
   it("resolves MIME from filename when browser type is missing", () => {
@@ -87,6 +95,14 @@ describe("source constants", () => {
         new Error("PDF extraction failed: no embeddable text (image-only PDF).")
       ),
       "PDF extraction failed: no embeddable text (image-only PDF)."
+    );
+    assert.equal(
+      formatSourceUploadError(new Error("Unexpected Prisma P2002 boom")),
+      "Database error"
+    );
+    assert.equal(
+      formatSourceUploadError(new Error("secret stacktrace xyz")),
+      "Upload failed. Please try again."
     );
   });
 });

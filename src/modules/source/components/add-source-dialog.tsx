@@ -95,13 +95,8 @@ function AddSourceDialogForm({
   }, [isUploading, onClose]);
 
   useEffect(() => {
-    if (!isUploading) {
-      setStepIndex(0);
-      setElapsedSec(0);
-      return;
-    }
+    if (!isUploading) return;
 
-    setStepIndex(0);
     const delays =
       progressKind === "file" ? [400, 900, 1600] : [500, 1200];
     const stepTimers = delays.map((delay, index) =>
@@ -116,6 +111,10 @@ function AddSourceDialogForm({
       window.clearInterval(tick);
     };
   }, [isUploading, progressKind]);
+
+  // Reset progress UI when upload ends (avoid setState-in-effect on the idle path).
+  const displayStepIndex = isUploading ? stepIndex : 0;
+  const displayElapsedSec = isUploading ? elapsedSec : 0;
 
   function validateFile(file: File): string | null {
     if (!file.size) {
@@ -151,6 +150,8 @@ function AddSourceDialogForm({
     setError(null);
     setProgressKind("file");
     setActiveLabel(file.name);
+    setStepIndex(0);
+    setElapsedSec(0);
     setIsUploading(true);
 
     try {
@@ -188,6 +189,8 @@ function AddSourceDialogForm({
     setError(null);
     setProgressKind(kind);
     setActiveLabel(url);
+    setStepIndex(0);
+    setElapsedSec(0);
     setIsUploading(true);
 
     try {
@@ -296,22 +299,22 @@ function AddSourceDialogForm({
                 <p className="truncate text-sm font-medium text-[var(--foreground)]">
                   {
                     progressSteps[
-                      Math.min(stepIndex, progressSteps.length - 1)
+                      Math.min(displayStepIndex, progressSteps.length - 1)
                     ]
                   }
                 </p>
                 <p className="text-xs text-[var(--muted)]">
-                  {elapsedSec < 1
+                  {displayElapsedSec < 1
                     ? "Starting…"
-                    : `${elapsedSec}s elapsed · usually under 20s`}
+                    : `${displayElapsedSec}s elapsed · usually under 20s`}
                 </p>
               </div>
             </div>
 
             <ol className="space-y-2">
               {progressSteps.map((step, index) => {
-                const done = index < stepIndex;
-                const active = index === stepIndex;
+                const done = index < displayStepIndex;
+                const active = index === displayStepIndex;
                 return (
                   <li
                     key={step}

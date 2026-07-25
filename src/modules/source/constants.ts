@@ -20,6 +20,17 @@ export const WEBSITE_STORAGE_PATH = "website";
 /** Sentinel storagePath for YouTube sources (not a blob/local file key). */
 export const YOUTUBE_STORAGE_PATH = "youtube";
 
+const SENTINEL_STORAGE_PATHS = new Set([
+  WEBSITE_STORAGE_PATH,
+  YOUTUBE_STORAGE_PATH,
+  "pending",
+]);
+
+/** True when storagePath is not a real local key or blob URL. */
+export function isSentinelStoragePath(storagePath: string): boolean {
+  return SENTINEL_STORAGE_PATHS.has(storagePath);
+}
+
 /** Shown when YouTube blocks caption fetches from cloud IPs (e.g. Vercel). */
 export const CLOUD_YOUTUBE_BLOCKED_MESSAGE =
   "YouTube blocked transcript access from this server. Add SUPADATA_API_KEY (free at https://supadata.ai) in Vercel env, then redeploy.";
@@ -175,18 +186,22 @@ export function formatSourceUploadError(error: unknown): string {
     return message;
   }
   if (/storage error:/i.test(message)) {
-    return message;
+    if (/not configured|BLOB_STORE_ID|BLOB_READ_WRITE_TOKEN/i.test(message)) {
+      return "Storage error: Blob is not configured on this deployment.";
+    }
+    return "Storage error";
   }
   if (
     /BLOB_STORE_ID|BLOB_READ_WRITE_TOKEN|blob store|blob write|ENOENT|EACCES/i.test(
       message
     )
   ) {
-    return message.startsWith("Storage error") ? message : "Storage error";
+    return "Storage error";
   }
   if (/prisma|database|P\d{4}/i.test(message)) {
     return "Database error";
   }
 
-  return message;
+  // Never leak raw exception text (stack fragments, provider internals).
+  return "Upload failed. Please try again.";
 }

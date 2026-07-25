@@ -1,7 +1,7 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
+import { DefaultChatTransport, isTextUIPart, type UIMessage } from "ai";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ModelDefinition } from "@/modules/ai/model-registry";
@@ -160,9 +160,18 @@ export function ConversationView({
   });
 
   const busy = isChatBusy(status);
+  const lastMessage = messages.at(-1);
+  const lastAssistantEmpty =
+    lastMessage?.role === "assistant" &&
+    !lastMessage.parts.some(
+      (part) => isTextUIPart(part) && part.text.trim().length > 0
+    );
+  // Keep the thinking state while the request is in flight OR the assistant
+  // bubble exists but has no text yet (common during tool calls / slow TTFT).
   const isThinking =
     status === "submitted" ||
-    (status === "streaming" && messages.at(-1)?.role !== "assistant");
+    (busy && lastMessage?.role !== "assistant") ||
+    (busy && lastAssistantEmpty);
 
   useEffect(() => {
     if (pendingEditSent.current) return;

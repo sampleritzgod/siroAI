@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { chunkText } from "@/modules/rag/chunk";
 import {
@@ -104,28 +105,30 @@ export async function indexAttachmentForRag(input: {
     DELETE FROM "DocumentChunk" WHERE "attachmentId" = ${input.attachmentId}
   `;
 
-  for (let i = 0; i < chunks.length; i += 1) {
-    const chunk = chunks[i]!;
-    const embedding = embeddings[i];
-    if (!embedding) {
-      throw new Error(`Embeddings missing at chunk index ${i}`);
-    }
-
-    const id = createId();
-    const vector = toVectorLiteral(embedding);
-
-    await prisma.$executeRaw`
-      INSERT INTO "DocumentChunk"
-        ("id", "conversationId", "attachmentId", "chunkIndex", "content", "embedding", "createdAt")
-      VALUES (
-        ${id},
+  // Batch inserts — sequential per-chunk round trips blow past serverless limits.
+  const INSERT_BATCH_SIZE = 30;
+  for (let i = 0; i < chunks.length; i += INSERT_BATCH_SIZE) {
+    const batch = chunks.slice(i, i + INSERT_BATCH_SIZE);
+    const rows = batch.map((chunk, j) => {
+      const embedding = embeddings[i + j];
+      if (!embedding) {
+        throw new Error(`Embeddings missing at chunk index ${i + j}`);
+      }
+      return Prisma.sql`(
+        ${createId()},
         ${input.conversationId},
         ${input.attachmentId},
         ${chunk.index},
         ${chunk.content},
-        ${vector}::vector,
+        ${toVectorLiteral(embedding)}::vector,
         NOW()
-      )
+      )`;
+    });
+
+    await prisma.$executeRaw`
+      INSERT INTO "DocumentChunk"
+        ("id", "conversationId", "attachmentId", "chunkIndex", "content", "embedding", "createdAt")
+      VALUES ${Prisma.join(rows)}
     `;
   }
 

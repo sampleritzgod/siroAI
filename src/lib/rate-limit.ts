@@ -51,6 +51,8 @@ function memoryLimit(
 
 /**
  * Fixed-window rate limit (Redis INCR when configured, else in-process).
+ * Note: the memory fallback is per-process only — on serverless each instance
+ * has its own counter, so production should set Upstash Redis.
  */
 export async function rateLimit(input: {
   scope: string;
@@ -81,6 +83,18 @@ export async function rateLimit(input: {
       };
     } catch (error) {
       console.warn("[rate-limit] redis failed, using memory", error);
+    }
+  } else if (
+    process.env.VERCEL === "1" &&
+    process.env.NODE_ENV === "production"
+  ) {
+    // Log once per process so operators notice missing Redis in prod.
+    if (!(globalThis as { __siroRateLimitWarned?: boolean }).__siroRateLimitWarned) {
+      (globalThis as { __siroRateLimitWarned?: boolean }).__siroRateLimitWarned =
+        true;
+      console.warn(
+        "[rate-limit] UPSTASH_REDIS not configured — using per-instance memory limits (ineffective under concurrency)"
+      );
     }
   }
 

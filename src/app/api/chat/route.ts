@@ -44,6 +44,9 @@ import {
 } from "@/modules/rag/retrieve";
 import { recordUsageEvent } from "@/modules/usage/record-usage";
 
+// Retrieval + optional tools + streaming need headroom on Vercel.
+export const maxDuration = 60;
+
 function jsonError(
   message: string,
   status: number,
@@ -127,22 +130,11 @@ export async function POST(req: Request) {
       return jsonError("Conversation not found", 404);
     }
 
-    const notebook = await prisma.notebook.findFirst({
-      where: {
-        id: conversation.notebookId,
-        userId: user.id,
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
-
-    if (!notebook) {
-      return jsonError("Notebook not found", 404);
-    }
+    const notebookId = conversation.notebookId;
 
     const indexedSourceCount = await prisma.source.count({
       where: {
-        notebookId: notebook.id,
+        notebookId,
         indexingStatus: "INDEXED",
       },
     });
@@ -249,7 +241,7 @@ export async function POST(req: Request) {
     let retrievedCount = 0;
     let retrievalAttempted = false;
     try {
-      const hasNotebookChunks = await notebookHasIndexedChunks(notebook.id);
+      const hasNotebookChunks = await notebookHasIndexedChunks(notebookId);
       const hasAttachmentChunks = await conversationHasIndexedChunks(id);
 
       if (!hasNotebookChunks && !hasAttachmentChunks) {
@@ -257,13 +249,13 @@ export async function POST(req: Request) {
           logger.warn("[RETRIEVE] no_indexed_sources", {
             requestId,
             conversationId: id,
-            notebookId: notebook.id,
+            notebookId,
           });
         } else {
           logger.warn("[RETRIEVE] embeddings_missing", {
             requestId,
             conversationId: id,
-            notebookId: notebook.id,
+            notebookId,
             indexedSourceCount,
           });
         }
@@ -280,7 +272,7 @@ export async function POST(req: Request) {
           retrievalAttempted = true;
           const chunks = await retrieveRelevantChunks({
             conversationId: id,
-            notebookId: notebook.id,
+            notebookId,
             query: latestUserText,
             limit: 6,
           });
@@ -291,7 +283,7 @@ export async function POST(req: Request) {
             logger.warn("[RETRIEVE] zero_chunks", {
               requestId,
               conversationId: id,
-              notebookId: notebook.id,
+              notebookId,
               reason:
                 "No chunks above similarity floor (or empty index match)",
             });
@@ -307,23 +299,30 @@ export async function POST(req: Request) {
       retrieveStage.error(error, {
         requestId,
         conversationId: id,
-        notebookId: notebook.id,
+        notebookId,
       });
       // Do not leak provider/DB internals to the client.
       return jsonError("Retrieval failed", 500);
     }
 
     // Avoid a second embed+retrieve via ragSearch when context was already injected.
+    // Also skip webSearch when notebook retrieval already found passages — otherwise
+    // the model often calls Tavily "just in case", and the UI sits on "…" for 10s+.
+    const skipWebSearch = retrievalAttempted && retrievedCount > 0 && !forceWebSearch;
     const tools = toolsEnabled
       ? createChatTools({
           conversationId: id,
-          notebookId: notebook.id,
+          notebookId,
           skipRagSearch: retrievalAttempted,
+          skipWebSearch,
         })
       : undefined;
+    const hasTools = Boolean(
+      tools && Object.keys(tools as Record<string, unknown>).length > 0
+    );
 
     const modelMessages = await convertToModelMessages(modelReadyMessages, {
-      tools,
+      tools: hasTools ? tools : undefined,
       ignoreIncompleteToolCalls: true,
     });
 
@@ -337,12 +336,12 @@ export async function POST(req: Request) {
     promptStage.started({
       requestId,
       conversationId: id,
-      notebookId: notebook.id,
+      notebookId,
     });
     promptStage.completed({
       requestId,
       conversationId: id,
-      notebookId: notebook.id,
+      notebookId,
       hasRetrievedContext: Boolean(ragContext),
       retrievedCount,
       systemChars: system.length,
@@ -362,14 +361,14 @@ export async function POST(req: Request) {
     responseStage.started({
       requestId,
       conversationId: id,
-      notebookId: notebook.id,
+      notebookId,
     });
 
     logger.info("chat_stream_start", {
       requestId,
       userId: user.id,
       conversationId: id,
-      notebookId: notebook.id,
+      notebookId,
       branchId: resolvedBranchId,
       modelId,
       retrievedCount,
@@ -383,7 +382,7 @@ export async function POST(req: Request) {
       model: getLanguageModel(modelId),
       system,
       messages: modelMessages,
-      ...(tools
+      ...(hasTools && tools
         ? {
             tools,
             prepareStep: ({ stepNumber }: { stepNumber: number }) => {
@@ -496,8 +495,12 @@ export async function POST(req: Request) {
     const message =
       error instanceof Error ? error.message : "Internal server error";
 
-    if (/not found/i.test(message) || /unauthorized/i.test(message)) {
-      return jsonError(message, /unauthorized/i.test(message) ? 401 : 404);
+    if (/unauthorized/i.test(message)) {
+      return jsonError("Unauthorized", 401);
+    }
+
+    if (/not found/i.test(message)) {
+      return jsonError("Not found", 404);
     }
 
     if (/rate|quota|429/i.test(message)) {
@@ -507,6 +510,7 @@ export async function POST(req: Request) {
       );
     }
 
-    return jsonError(message, 500);
+    // Do not leak provider/DB/stack internals to the client.
+    return jsonError("Something went wrong. Please try again.", 500);
   }
 }

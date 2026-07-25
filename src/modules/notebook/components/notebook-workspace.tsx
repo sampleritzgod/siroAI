@@ -48,18 +48,15 @@ export function NotebookWorkspace({
   const [openingChat, setOpeningChat] = useState(false);
   const [openChatError, setOpenChatError] = useState<string | null>(null);
   const autoOpenAttempted = useRef<string | null>(null);
+  // Force chat panel on conversation routes without a setState-in-effect.
+  const activeMobilePanel: MobilePanel =
+    ready && isChatRoute ? "chat" : mobilePanel;
 
   useEffect(() => {
     if (!ready && isChatRoute) {
       router.replace("/");
     }
   }, [ready, isChatRoute, router]);
-
-  useEffect(() => {
-    if (ready && isChatRoute) {
-      setMobilePanel("chat");
-    }
-  }, [ready, isChatRoute]);
 
   useEffect(() => {
     if (!indexing) return;
@@ -199,7 +196,7 @@ export function NotebookWorkspace({
             onClick={() => setMobilePanel(id)}
             className={cn(
               "min-w-0 flex-1 px-3 py-2.5 text-sm font-medium",
-              mobilePanel === id
+              activeMobilePanel === id
                 ? "border-b-2 border-[var(--accent)] text-[var(--accent)]"
                 : "text-[var(--muted)]"
             )}
@@ -213,7 +210,7 @@ export function NotebookWorkspace({
         <section
           className={cn(
             "relative z-20 h-full w-full shrink-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--sidebar)] md:w-64 md:border-r lg:w-72",
-            mobilePanel === "sources" ? "flex" : "hidden md:flex"
+            activeMobilePanel === "sources" ? "flex" : "hidden md:flex"
           )}
           aria-label="Sources"
         >
@@ -223,7 +220,7 @@ export function NotebookWorkspace({
         <section
           className={cn(
             "relative z-0 min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--background)]",
-            mobilePanel === "chat" ? "flex" : "hidden md:flex"
+            activeMobilePanel === "chat" ? "flex" : "hidden md:flex"
           )}
           aria-label="Chat"
         >
@@ -233,7 +230,7 @@ export function NotebookWorkspace({
         <section
           className={cn(
             "relative z-0 h-full w-full shrink-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--sidebar)] lg:w-80 lg:border-l",
-            mobilePanel === "studio" ? "flex" : "hidden lg:flex"
+            activeMobilePanel === "studio" ? "flex" : "hidden lg:flex"
           )}
           aria-label="Studio"
         >
