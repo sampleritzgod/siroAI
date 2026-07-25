@@ -101,7 +101,7 @@ async function persistPageImage(input: {
       `attachments/${input.attachmentId}/pages/${input.pageNumber}.png`,
       input.png,
       {
-        access: "public",
+        access: "private",
         contentType: "image/png",
         // Omit token on Vercel so the SDK can authenticate via OIDC + BLOB_STORE_ID.
         ...(token ? { token } : {}),

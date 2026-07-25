@@ -60,7 +60,8 @@ export async function storeUpload(input: {
         `attachments/${input.attachmentId}/${safeName}`,
         input.bytes,
         {
-          access: "public",
+          // Store is private (Vercel Blob default for new stores).
+          access: "private",
           contentType: input.mediaType,
           ...blobAuthOptions(),
         }
