@@ -2,6 +2,9 @@ export const ACTIVE_NOTEBOOK_STORAGE_KEY = "siroai:activeNotebookId";
 
 const listeners = new Set<() => void>();
 
+/** In-memory only — notebook the user clicked until the URL catches up. */
+let pendingNotebookId: string | null = null;
+
 function emitActiveNotebookChange() {
   for (const listener of listeners) {
     listener();
@@ -61,6 +64,16 @@ export function clearActiveNotebookId(): void {
     // Ignore storage failures.
   }
 
+  emitActiveNotebookChange();
+}
+
+export function readPendingNotebookId(): string | null {
+  return pendingNotebookId;
+}
+
+export function writePendingNotebookId(notebookId: string | null): void {
+  if (pendingNotebookId === notebookId) return;
+  pendingNotebookId = notebookId;
   emitActiveNotebookChange();
 }
 

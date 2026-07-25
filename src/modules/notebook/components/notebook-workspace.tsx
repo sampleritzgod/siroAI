@@ -125,24 +125,47 @@ export function NotebookWorkspace({
     <NotebookOnboarding onAddSource={() => setAddSourceOpen(true)} />
   );
 
-  const chatContent = isChatRoute ? (
-    children
-  ) : (
-    <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-[var(--background)] px-6 text-center">
-      <span
-        className="size-6 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
-        aria-hidden="true"
-      />
-      <p className="text-sm text-[var(--muted)]">
-        {openingChat ? "Opening chat…" : "Loading chat…"}
-      </p>
-      {openChatError ? (
-        <p className="text-sm text-red-600" role="alert">
-          {openChatError}
-        </p>
-      ) : null}
-    </div>
-  );
+  const chatContent = (() => {
+    if (!isChatRoute) {
+      return (
+        <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-[var(--background)] px-6 text-center">
+          <span
+            className="size-6 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+            aria-hidden="true"
+          />
+          <p className="text-sm text-[var(--muted)]">
+            {openingChat ? "Opening chat…" : "Loading chat…"}
+          </p>
+          {openChatError ? (
+            <p className="text-sm text-red-600" role="alert">
+              {openChatError}
+            </p>
+          ) : null}
+        </div>
+      );
+    }
+
+    // During a notebook switch the URL can still point at the previous
+    // notebook's conversation for one render — don't flash that chat.
+    const routeMatch = pathname.match(/^\/c\/([^/?#]+)/);
+    const routeConversationId = routeMatch?.[1];
+    if (
+      routeConversationId &&
+      !conversations.some((item) => item.id === routeConversationId)
+    ) {
+      return (
+        <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-[var(--background)] px-6 text-center">
+          <span
+            className="size-6 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+            aria-hidden="true"
+          />
+          <p className="text-sm text-[var(--muted)]">Switching notebook…</p>
+        </div>
+      );
+    }
+
+    return children;
+  })();
 
   const sourcesPanel = (
     <SourcesPanel

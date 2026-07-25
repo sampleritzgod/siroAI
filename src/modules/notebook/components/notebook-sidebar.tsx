@@ -12,9 +12,11 @@ import type { ConversationListItem } from "@/modules/conversation/actions/conver
 import {
   clearActiveNotebookId,
   readActiveNotebookId,
+  readPendingNotebookId,
   resolveActiveNotebookId,
   subscribeActiveNotebook,
   writeActiveNotebookId,
+  writePendingNotebookId,
 } from "@/modules/notebook/active-notebook";
 import { createNotebookQuick } from "@/modules/notebook/actions/notebook-actions";
 import { NotebookEmptyState } from "@/modules/notebook/components/notebook-empty-state";
@@ -33,6 +35,19 @@ type NotebookShellProps = {
 /**
  * NotebookLM-style shell: Sources | Chat for the active notebook.
  */
+function latestConversationForNotebook(
+  conversations: ConversationListItem[],
+  notebookId: string
+) {
+  return [...conversations]
+    .filter((item) => item.notebookId === notebookId)
+    .sort(
+      (a, b) =>
+        new Date(b.lastMessageAt).getTime() -
+        new Date(a.lastMessageAt).getTime()
+    )[0];
+}
+
 export function NotebookAppShell({
   notebooks,
   conversations,
@@ -49,6 +64,11 @@ export function NotebookAppShell({
     readActiveNotebookId,
     () => null
   );
+  const pendingNotebookId = useSyncExternalStore(
+    subscribeActiveNotebook,
+    readPendingNotebookId,
+    () => null
+  );
 
   const conversationMatch = pathname.match(/^\/c\/([^/?#]+)/);
   const conversationId = conversationMatch?.[1];
@@ -56,19 +76,34 @@ export function NotebookAppShell({
     ? conversations.find((item) => item.id === conversationId)?.notebookId
     : undefined;
 
+  // Drop the pending override once navigation landed on the target notebook
+  // (or on notebook home, which will auto-open that notebook's chat).
+  useEffect(() => {
+    if (!pendingNotebookId) return;
+    if (
+      pathname === "/" ||
+      conversationNotebookId === pendingNotebookId
+    ) {
+      writePendingNotebookId(null);
+    }
+  }, [pendingNotebookId, pathname, conversationNotebookId]);
+
   const activeNotebookId = resolveActiveNotebookId(
     notebooks,
-    conversationNotebookId ?? storedNotebookId
+    pendingNotebookId ?? conversationNotebookId ?? storedNotebookId
   );
 
   useEffect(() => {
+    // While a manual switch is in flight, do not let the still-visible
+    // previous /c/… conversation rewrite localStorage back.
+    if (pendingNotebookId) return;
     if (activeNotebookId && activeNotebookId !== storedNotebookId) {
       writeActiveNotebookId(activeNotebookId);
     }
     if (!activeNotebookId && storedNotebookId) {
       clearActiveNotebookId();
     }
-  }, [activeNotebookId, storedNotebookId]);
+  }, [activeNotebookId, storedNotebookId, pendingNotebookId]);
 
   const activeNotebook = useMemo(
     () => notebooks.find((item) => item.id === activeNotebookId) ?? null,
@@ -97,17 +132,33 @@ export function NotebookAppShell({
   function selectNotebook(notebookId: string) {
     // Already reading this notebook — don't bounce through notebook home just
     // to re-open the same chat.
-    if (notebookId === activeNotebookId && pathname.startsWith("/c/")) return;
+    if (
+      notebookId === activeNotebookId &&
+      !pendingNotebookId &&
+      pathname.startsWith("/c/") &&
+      conversationNotebookId === notebookId
+    ) {
+      return;
+    }
 
+    writePendingNotebookId(notebookId);
     writeActiveNotebookId(notebookId);
-    // Always return to notebook home so the workspace resumes that notebook's chat.
-    router.push("/");
+
+    // Jump straight to that notebook's latest chat. Going via "/" while the URL
+    // is still another notebook's /c/… lets the sync effect undo the selection.
+    const latest = latestConversationForNotebook(conversations, notebookId);
+    if (latest) {
+      router.push(`/c/${latest.id}`);
+    } else {
+      router.push("/");
+    }
     router.refresh();
   }
 
   function handleNotebookDeleted(deletedId: string) {
     const remaining = notebooks.filter((item) => item.id !== deletedId);
     const nextId = resolveActiveNotebookId(remaining, null);
+    writePendingNotebookId(null);
     if (nextId) {
       writeActiveNotebookId(nextId);
     } else {
