@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { NotebookChatWelcome } from "@/modules/notebook/components/notebook-chat-welcome";
+import type { ConversationListItem } from "@/modules/conversation/actions/conversation-actions";
+import { createConversation } from "@/modules/conversation/actions/conversation-actions";
 import { NotebookIndexingStatus } from "@/modules/notebook/components/notebook-indexing-status";
 import { NotebookOnboarding } from "@/modules/notebook/components/notebook-onboarding";
 import { SourcesPanel } from "@/modules/notebook/components/sources-panel";
@@ -22,6 +23,7 @@ type NotebookWorkspaceProps = {
   notebook: NotebookListItem;
   notebooks: NotebookListItem[];
   sources: SourceListItem[];
+  conversations: ConversationListItem[];
   onSelectNotebook: (notebookId: string) => void;
   onRequestCreateNotebook: () => void;
   onNotebookDeleted: (notebookId: string) => void;
@@ -32,6 +34,7 @@ export function NotebookWorkspace({
   notebook,
   notebooks,
   sources,
+  conversations,
   onSelectNotebook,
   onRequestCreateNotebook,
   onNotebookDeleted,
@@ -44,6 +47,9 @@ export function NotebookWorkspace({
   const indexing = useMemo(() => isNotebookIndexing(sources), [sources]);
   const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
+  const [openingChat, setOpeningChat] = useState(false);
+  const [openChatError, setOpenChatError] = useState<string | null>(null);
+  const autoOpenAttempted = useRef<string | null>(null);
 
   useEffect(() => {
     if (!ready && isChatRoute) {
@@ -65,6 +71,52 @@ export function NotebookWorkspace({
     return () => window.clearInterval(timer);
   }, [indexing, router]);
 
+  // After the first source is indexed, open chat automatically.
+  // Users should not need a separate "New Chat" click to start.
+  useEffect(() => {
+    if (!ready || isChatRoute || openingChat) return;
+
+    const latest = [...conversations].sort(
+      (a, b) =>
+        new Date(b.lastMessageAt).getTime() -
+        new Date(a.lastMessageAt).getTime()
+    )[0];
+
+    if (latest) {
+      if (autoOpenAttempted.current === `resume:${latest.id}`) return;
+      autoOpenAttempted.current = `resume:${latest.id}`;
+      router.replace(`/c/${latest.id}`);
+      return;
+    }
+
+    if (autoOpenAttempted.current === `create:${notebook.id}`) return;
+    autoOpenAttempted.current = `create:${notebook.id}`;
+    setOpeningChat(true);
+    setOpenChatError(null);
+
+    void createConversation(notebook.id)
+      .then((conversation) => {
+        router.replace(`/c/${conversation.id}`);
+        router.refresh();
+      })
+      .catch((error) => {
+        autoOpenAttempted.current = null;
+        setOpenChatError(
+          error instanceof Error ? error.message : "Could not open chat"
+        );
+      })
+      .finally(() => {
+        setOpeningChat(false);
+      });
+  }, [
+    ready,
+    isChatRoute,
+    conversations,
+    notebook.id,
+    openingChat,
+    router,
+  ]);
+
   const setupContent = indexing ? (
     <NotebookIndexingStatus sources={sources} />
   ) : (
@@ -74,7 +126,20 @@ export function NotebookWorkspace({
   const chatContent = isChatRoute ? (
     children
   ) : (
-    <NotebookChatWelcome notebook={notebook} />
+    <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-[var(--background)] px-6 text-center">
+      <span
+        className="size-6 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+        aria-hidden="true"
+      />
+      <p className="text-sm text-[var(--muted)]">
+        {openingChat ? "Opening chat…" : "Loading chat…"}
+      </p>
+      {openChatError ? (
+        <p className="text-sm text-red-600" role="alert">
+          {openChatError}
+        </p>
+      ) : null}
+    </div>
   );
 
   const sourcesPanel = (

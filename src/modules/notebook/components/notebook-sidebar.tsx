@@ -81,6 +81,14 @@ export function NotebookAppShell({
     [sources, activeNotebookId]
   );
 
+  const scopedConversations = useMemo(
+    () =>
+      activeNotebookId
+        ? conversations.filter((item) => item.notebookId === activeNotebookId)
+        : [],
+    [conversations, activeNotebookId]
+  );
+
   const showEmptyLibrary = notebooks.length === 0;
   const isWorkspaceRoute = pathname === "/" || pathname.startsWith("/c/");
 
@@ -115,6 +123,7 @@ export function NotebookAppShell({
             notebook={activeNotebook}
             notebooks={notebooks}
             sources={scopedSources}
+            conversations={scopedConversations}
             onSelectNotebook={selectNotebook}
             onRequestCreateNotebook={() => setCreateOpen(true)}
             onNotebookDeleted={handleNotebookDeleted}

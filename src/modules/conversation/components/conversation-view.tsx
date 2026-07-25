@@ -275,9 +275,10 @@ export function ConversationView({
           <input type="hidden" name="notebookId" value={notebookId} />
           <button
             type="submit"
+            title="Start another conversation in this notebook"
             className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs font-medium transition hover:bg-[var(--surface)] sm:text-sm"
           >
-            New Chat
+            + Chat
           </button>
         </form>
         <ShareControls

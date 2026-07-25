@@ -12,7 +12,8 @@ export function NotebookOnboarding({ onAddSource }: NotebookOnboardingProps) {
           This notebook is empty.
         </h2>
         <p className="mt-3 text-sm leading-relaxed text-[var(--muted)]">
-          Add your first source to begin learning.
+          Add a PDF or text file. Chat opens automatically once it finishes
+          indexing — you do not need to click New Chat.
         </p>
 
         <div className="mt-8 grid gap-4 text-left sm:grid-cols-2">
