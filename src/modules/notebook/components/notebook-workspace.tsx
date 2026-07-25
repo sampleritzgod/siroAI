@@ -155,21 +155,20 @@ export function NotebookWorkspace({
   if (!ready) {
     return (
       <div className="flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden">
-        <div className="grid h-full min-h-0 w-full flex-1 grid-cols-1 md:grid-cols-[minmax(14rem,22%)_minmax(0,1fr)]">
-          <section
-            className="hidden min-h-0 min-w-0 overflow-hidden border-[var(--border)] md:flex md:border-r"
-            aria-label="Sources"
-          >
-            {sourcesPanel}
-          </section>
+        {/* Fixed-width flex layout avoids the indexing panel overlapping the sidebar. */}
+        <aside
+          className="relative z-20 hidden h-full w-64 shrink-0 flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--sidebar)] md:flex lg:w-72"
+          aria-label="Sources"
+        >
+          {sourcesPanel}
+        </aside>
 
-          <section
-            className="flex min-h-0 min-w-0 flex-col overflow-hidden"
-            aria-label="Notebook setup"
-          >
-            {setupContent}
-          </section>
-        </div>
+        <section
+          className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--background)]"
+          aria-label="Notebook setup"
+        >
+          {setupContent}
+        </section>
 
         <AddSourceDialog
           open={addSourceOpen}
@@ -210,10 +209,10 @@ export function NotebookWorkspace({
         ))}
       </div>
 
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[minmax(14rem,22%)_minmax(0,1fr)] lg:grid-cols-[minmax(14rem,22%)_minmax(0,1fr)_minmax(16rem,30%)]">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <section
           className={cn(
-            "min-h-0 min-w-0 flex-col overflow-hidden border-[var(--border)] md:border-r",
+            "relative z-20 h-full w-full shrink-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--sidebar)] md:w-64 md:border-r lg:w-72",
             mobilePanel === "sources" ? "flex" : "hidden md:flex"
           )}
           aria-label="Sources"
@@ -223,7 +222,7 @@ export function NotebookWorkspace({
 
         <section
           className={cn(
-            "min-h-0 min-w-0 flex-col overflow-hidden",
+            "relative z-0 min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--background)]",
             mobilePanel === "chat" ? "flex" : "hidden md:flex"
           )}
           aria-label="Chat"
@@ -233,7 +232,7 @@ export function NotebookWorkspace({
 
         <section
           className={cn(
-            "min-h-0 min-w-0 flex-col overflow-hidden border-[var(--border)] lg:border-l",
+            "relative z-0 h-full w-full shrink-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--sidebar)] lg:w-80 lg:border-l",
             mobilePanel === "studio" ? "flex" : "hidden lg:flex"
           )}
           aria-label="Studio"

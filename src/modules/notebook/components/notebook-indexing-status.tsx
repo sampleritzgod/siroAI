@@ -49,8 +49,8 @@ export function NotebookIndexingStatus({
   }, [failed, active?.id]);
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto bg-[var(--background)] px-6 py-10">
-      <div className="w-full max-w-sm text-center">
+    <div className="flex h-full min-h-0 w-full flex-col items-center justify-center overflow-y-auto overscroll-contain px-6 py-10">
+      <div className="w-full max-w-sm shrink-0 text-center">
         <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-[var(--accent)]/10">
           {failed ? (
             <span className="text-lg text-red-500" aria-hidden="true">

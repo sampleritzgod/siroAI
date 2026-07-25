@@ -136,7 +136,7 @@ export function SourcesPanel({
   return (
     <aside
       className={cn(
-        "flex h-full min-h-0 flex-col bg-[var(--sidebar)]",
+        "flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-[var(--sidebar)]",
         isPending && "opacity-90"
       )}
     >
@@ -248,42 +248,9 @@ export function SourcesPanel({
       </div>
 
       {isIndexing ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-            Indexing
-          </p>
-          <ul className="mt-3 flex flex-col gap-2">
-            {sources.map((source) => (
-              <li
-                key={source.id}
-                className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3"
-              >
-                <div className="flex items-start gap-2">
-                  {source.indexingStatus === "PROCESSING" ||
-                  source.indexingStatus === "PENDING" ? (
-                    <span
-                      className="mt-0.5 size-3.5 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <span className="mt-0.5 text-xs" aria-hidden="true">
-                      {source.type === "PDF" ? "📄" : "📝"}
-                    </span>
-                  )}
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {source.title}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-[var(--muted)]">
-                      {formatIndexingStatus(source.indexingStatus)}
-                    </p>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-4 text-xs leading-relaxed text-[var(--muted)]">
-            Hang tight — chat unlocks when indexing finishes.
+        <div className="flex min-h-0 flex-1 flex-col justify-end px-3 py-4">
+          <p className="text-xs leading-relaxed text-[var(--muted)]">
+            Indexing in progress — details are on the right.
           </p>
         </div>
       ) : (
