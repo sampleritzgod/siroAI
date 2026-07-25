@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { invalidateConversationCaches } from "@/lib/cache/invalidate";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/modules/auth/actions/require-user";
+import { assertConversationOwner } from "@/modules/conversation/ownership";
 import { resolveBranchMessageRows } from "@/modules/conversation/utils/branch-timeline";
 
 export type BranchListItem = {
@@ -18,20 +19,18 @@ export type BranchListItem = {
 };
 
 async function assertOwnsConversation(conversationId: string, userId: string) {
-  const conversation = await prisma.conversation.findFirst({
-    where: { id: conversationId, userId },
-  });
-
-  if (!conversation) {
-    throw new Error("Conversation not found");
-  }
-
-  return conversation;
+  return assertConversationOwner(conversationId, userId);
 }
 
 async function assertOwnsBranch(branchId: string, userId: string) {
   const branch = await prisma.branch.findFirst({
-    where: { id: branchId, conversation: { userId } },
+    where: {
+      id: branchId,
+      conversation: {
+        userId,
+        notebook: { userId },
+      },
+    },
   });
 
   if (!branch) {

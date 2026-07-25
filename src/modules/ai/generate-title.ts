@@ -54,7 +54,11 @@ export async function generateConversationTitle(input: {
 
   try {
     const conversation = await prisma.conversation.findFirst({
-      where: { id: input.conversationId, userId: input.userId },
+      where: {
+        id: input.conversationId,
+        userId: input.userId,
+        notebook: { userId: input.userId },
+      },
       select: { id: true, title: true },
     });
 
@@ -79,7 +83,11 @@ export async function generateConversationTitle(input: {
     }
 
     const fresh = await prisma.conversation.findFirst({
-      where: { id: input.conversationId, userId: input.userId },
+      where: {
+        id: input.conversationId,
+        userId: input.userId,
+        notebook: { userId: input.userId },
+      },
       select: { title: true },
     });
 

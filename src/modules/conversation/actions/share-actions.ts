@@ -7,7 +7,11 @@ import { createShareToken } from "@/modules/conversation/utils/share-token";
 
 async function assertOwner(conversationId: string, userId: string) {
   const conversation = await prisma.conversation.findFirst({
-    where: { id: conversationId, userId },
+    where: {
+      id: conversationId,
+      userId,
+      notebook: { userId },
+    },
     select: {
       id: true,
       activeBranchId: true,
@@ -52,7 +56,11 @@ export async function getShareState(
 ): Promise<ShareState> {
   const user = await requireUser();
   const conversation = await prisma.conversation.findFirst({
-    where: { id: conversationId, userId: user.id },
+    where: {
+      id: conversationId,
+      userId: user.id,
+      notebook: { userId: user.id },
+    },
     select: {
       shareToken: true,
       shareEnabledAt: true,

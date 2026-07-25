@@ -107,7 +107,11 @@ export async function POST(req: Request) {
     }
 
     const conversation = await prisma.conversation.findFirst({
-      where: { id, userId: user.id },
+      where: {
+        id,
+        userId: user.id,
+        notebook: { userId: user.id },
+      },
     });
 
     if (!conversation) {

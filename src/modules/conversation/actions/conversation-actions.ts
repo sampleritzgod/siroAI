@@ -6,11 +6,10 @@ import { CACHE_TTL, cacheKeys } from "@/lib/cache/keys";
 import { invalidateConversationCaches } from "@/lib/cache/invalidate";
 import { cacheGetJson, cacheSetJson } from "@/lib/cache/store";
 import { prisma } from "@/lib/db";
-import {
-  DEFAULT_MODEL_ID,
-  MODEL_REGISTRY,
-} from "@/modules/ai/model-registry";
+import { MODEL_REGISTRY } from "@/modules/ai/model-registry";
 import { requireUser } from "@/modules/auth/actions/require-user";
+import { createConversationForUser } from "@/modules/conversation/create-conversation";
+import { assertConversationOwner } from "@/modules/conversation/ownership";
 
 export type ConversationListItem = {
   id: string;
@@ -25,18 +24,6 @@ export type ConversationListItem = {
 type CachedConversationListItem = Omit<ConversationListItem, "lastMessageAt"> & {
   lastMessageAt: string;
 };
-
-async function assertConversationOwner(conversationId: string, userId: string) {
-  const conversation = await prisma.conversation.findFirst({
-    where: { id: conversationId, userId },
-  });
-
-  if (!conversation) {
-    throw new Error("Conversation not found");
-  }
-
-  return conversation;
-}
 
 function reviveListItem(item: CachedConversationListItem): ConversationListItem {
   return {
@@ -108,6 +95,7 @@ export async function listArchivedConversations(): Promise<
 type CachedConversationMeta = {
   id: string;
   userId: string;
+  notebookId: string;
   title: string;
   model: string | null;
   systemPrompt: string | null;
@@ -125,10 +113,12 @@ export async function getConversation(conversationId: string) {
   const key = cacheKeys.convMeta(conversationId);
 
   const cached = await cacheGetJson<CachedConversationMeta>(key);
-  if (cached && cached.userId === user.id) {
+  // Ignore legacy cache entries that predate notebookId.
+  if (cached && cached.userId === user.id && cached.notebookId) {
     return {
       id: cached.id,
       userId: cached.userId,
+      notebookId: cached.notebookId,
       title: cached.title,
       model: cached.model,
       systemPrompt: cached.systemPrompt,
@@ -156,7 +146,11 @@ export async function getConversation(conversationId: string) {
   }
 
   const conversation = await prisma.conversation.findFirst({
-    where: { id: conversationId, userId: user.id },
+    where: {
+      id: conversationId,
+      userId: user.id,
+      notebook: { userId: user.id },
+    },
     include: {
       activeBranch: true,
       branches: {
@@ -173,6 +167,7 @@ export async function getConversation(conversationId: string) {
   const meta: CachedConversationMeta = {
     id: conversation.id,
     userId: conversation.userId,
+    notebookId: conversation.notebookId,
     title: conversation.title,
     model: conversation.model,
     systemPrompt: conversation.systemPrompt,
@@ -191,29 +186,20 @@ export async function getConversation(conversationId: string) {
 
 /**
  * Creates a conversation with a root branch and redirects to it.
+ * Uses the user's default notebook when notebookId is omitted (current UI).
+ * Accepts FormData when used as a <form action> (Next.js passes FormData).
  */
-export async function startNewChat() {
+export async function startNewChat(notebookId?: string | FormData) {
   const user = await requireUser();
 
-  const conversation = await prisma.$transaction(async (tx) => {
-    const created = await tx.conversation.create({
-      data: {
-        userId: user.id,
-        model: DEFAULT_MODEL_ID,
-      },
-    });
+  const resolvedNotebookId =
+    typeof notebookId === "string" && notebookId.trim()
+      ? notebookId.trim()
+      : undefined;
 
-    const rootBranch = await tx.branch.create({
-      data: {
-        conversationId: created.id,
-        title: "Main",
-      },
-    });
-
-    return tx.conversation.update({
-      where: { id: created.id },
-      data: { activeBranchId: rootBranch.id },
-    });
+  const conversation = await createConversationForUser({
+    userId: user.id,
+    notebookId: resolvedNotebookId,
   });
 
   await invalidateConversationCaches({ userId: user.id });
