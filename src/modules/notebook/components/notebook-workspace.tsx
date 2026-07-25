@@ -148,6 +148,7 @@ export function NotebookWorkspace({
       conversations={conversations}
       onSelectNotebook={onSelectNotebook}
       onNotebookDeleted={onNotebookDeleted}
+      variant={indexing ? "indexing" : "default"}
     />
   );
 

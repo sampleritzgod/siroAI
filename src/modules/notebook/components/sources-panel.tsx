@@ -32,6 +32,8 @@ type SourcesPanelProps = {
   conversations: ConversationListItem[];
   onSelectNotebook: (notebookId: string) => void;
   onNotebookDeleted: (notebookId: string) => void;
+  /** While indexing, show a quiet sidebar (no search / chats / add). */
+  variant?: "default" | "indexing";
 };
 
 export function SourcesPanel({
@@ -41,7 +43,9 @@ export function SourcesPanel({
   conversations,
   onSelectNotebook,
   onNotebookDeleted,
+  variant = "default",
 }: SourcesPanelProps) {
+  const isIndexing = variant === "indexing";
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -138,17 +142,24 @@ export function SourcesPanel({
     >
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--border)] px-3">
         <h2 className="text-sm font-semibold tracking-tight">Notebooks</h2>
-        <button
-          type="button"
-          onClick={createNotebookNow}
-          disabled={isPending}
-          className="rounded-lg bg-[var(--accent)] px-2.5 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-        >
-          + New
-        </button>
+        {!isIndexing ? (
+          <button
+            type="button"
+            onClick={createNotebookNow}
+            disabled={isPending}
+            className="rounded-lg bg-[var(--accent)] px-2.5 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+          >
+            + New
+          </button>
+        ) : null}
       </div>
 
-      <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-[var(--border)] px-2 py-2">
+      <div
+        className={cn(
+          "shrink-0 overflow-y-auto border-b border-[var(--border)] px-2 py-2",
+          isIndexing ? "max-h-none" : "max-h-[40%]"
+        )}
+      >
         <ul className="flex flex-col gap-0.5">
           {notebooks.map((item) => {
             const active = item.id === notebook.id;
@@ -163,23 +174,27 @@ export function SourcesPanel({
                   <button
                     type="button"
                     onClick={() => onSelectNotebook(item.id)}
+                    disabled={isIndexing}
                     className={cn(
                       "min-w-0 flex-1 truncate px-2 py-2.5 text-left text-sm",
                       active
                         ? "font-medium text-[var(--foreground)]"
-                        : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]"
+                        : "text-[var(--foreground)]/80 hover:text-[var(--foreground)]",
+                      isIndexing && "disabled:opacity-100"
                     )}
                   >
                     {item.title}
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Options for ${item.title}`}
-                    onClick={() => setNotebookActions(item)}
-                    className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
-                  >
-                    ···
-                  </button>
+                  {!isIndexing ? (
+                    <button
+                      type="button"
+                      aria-label={`Options for ${item.title}`}
+                      onClick={() => setNotebookActions(item)}
+                      className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
+                    >
+                      ···
+                    </button>
+                  ) : null}
                 </div>
               </li>
             );
@@ -192,7 +207,7 @@ export function SourcesPanel({
           </p>
         ) : null}
 
-        {deletedNotebooks.length > 0 ? (
+        {!isIndexing && deletedNotebooks.length > 0 ? (
           <div className="mt-2 border-t border-[var(--border)] pt-2">
             <button
               type="button"
@@ -232,115 +247,158 @@ export function SourcesPanel({
         ) : null}
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-b border-[var(--border)] p-3">
-        <p className="truncate text-xs font-medium text-[var(--muted)]">
-          In “{notebook.title}”
-        </p>
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
-        >
-          + Add Source
-        </button>
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search sources"
-          className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none placeholder:text-[var(--muted)]"
-        />
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">
-        <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-          Sources
-        </p>
-        {filteredSources.length === 0 ? (
-          <div className="mx-1 mb-3 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
-            {sources.length === 0
-              ? "No sources yet — only this notebook"
-              : "No sources match your search"}
-          </div>
-        ) : (
-          <ul className="mb-4 flex flex-col gap-0.5">
-            {filteredSources.map((source) => (
-              <li key={source.id}>
-                <div className="flex items-start rounded-lg px-1 py-1.5 hover:bg-[var(--surface)]">
-                  <button
-                    type="button"
-                    onClick={() => setMetadataSource(source)}
-                    className="min-w-0 flex-1 px-1 text-left"
-                  >
-                    <p className="truncate text-sm text-[var(--foreground)]">
-                      <span aria-hidden="true">
-                        {source.type === "PDF" ? "📄 " : "📝 "}
-                      </span>
+      {isIndexing ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+            Indexing
+          </p>
+          <ul className="mt-3 flex flex-col gap-2">
+            {sources.map((source) => (
+              <li
+                key={source.id}
+                className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3"
+              >
+                <div className="flex items-start gap-2">
+                  {source.indexingStatus === "PROCESSING" ||
+                  source.indexingStatus === "PENDING" ? (
+                    <span
+                      className="mt-0.5 size-3.5 shrink-0 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <span className="mt-0.5 text-xs" aria-hidden="true">
+                      {source.type === "PDF" ? "📄" : "📝"}
+                    </span>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
                       {source.title}
                     </p>
-                    <p
-                      className={cn(
-                        "truncate text-[11px]",
-                        source.indexingStatus === "FAILED"
-                          ? "text-red-600"
-                          : source.indexingStatus === "PROCESSING"
-                            ? "text-[var(--accent)]"
-                            : "text-[var(--muted)]"
-                      )}
-                    >
+                    <p className="mt-0.5 text-[11px] text-[var(--muted)]">
                       {formatIndexingStatus(source.indexingStatus)}
                     </p>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Options for ${source.title}`}
-                    onClick={() => setSourceActions(source)}
-                    className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
-                  >
-                    ···
-                  </button>
+                  </div>
                 </div>
               </li>
             ))}
           </ul>
-        )}
-
-        <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
-          Chats
-        </p>
-        {sortedChats.length === 0 ? (
-          <div className="mx-1 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
-            No chats yet
-          </div>
-        ) : (
-          <ul className="flex flex-col gap-0.5">
-            {sortedChats.map((chat) => {
-              const active = pathname === `/c/${chat.id}`;
-              return (
-                <li key={chat.id}>
-                  <Link
-                    href={`/c/${chat.id}`}
-                    className={cn(
-                      "block truncate rounded-lg px-2 py-2 text-sm",
-                      active
-                        ? "bg-[var(--surface)] font-medium text-[var(--foreground)]"
-                        : "text-[var(--foreground)]/80 hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
-                    )}
-                  >
-                    {chat.title}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {deleteError ? (
-          <p className="px-2 pt-2 text-[11px] text-red-600" role="alert">
-            {deleteError}
+          <p className="mt-4 text-xs leading-relaxed text-[var(--muted)]">
+            Hang tight — chat unlocks when indexing finishes.
           </p>
-        ) : null}
-      </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex shrink-0 flex-col gap-2 border-b border-[var(--border)] p-3">
+            <p className="truncate text-xs font-medium text-[var(--muted)]">
+              In “{notebook.title}”
+            </p>
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
+            >
+              + Add Source
+            </button>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search sources"
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none placeholder:text-[var(--muted)]"
+            />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">
+            <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+              Sources
+            </p>
+            {filteredSources.length === 0 ? (
+              <div className="mx-1 mb-3 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
+                {sources.length === 0
+                  ? "No sources yet — only this notebook"
+                  : "No sources match your search"}
+              </div>
+            ) : (
+              <ul className="mb-4 flex flex-col gap-0.5">
+                {filteredSources.map((source) => (
+                  <li key={source.id}>
+                    <div className="flex items-start rounded-lg px-1 py-1.5 hover:bg-[var(--surface)]">
+                      <button
+                        type="button"
+                        onClick={() => setMetadataSource(source)}
+                        className="min-w-0 flex-1 px-1 text-left"
+                      >
+                        <p className="truncate text-sm text-[var(--foreground)]">
+                          <span aria-hidden="true">
+                            {source.type === "PDF" ? "📄 " : "📝 "}
+                          </span>
+                          {source.title}
+                        </p>
+                        <p
+                          className={cn(
+                            "truncate text-[11px]",
+                            source.indexingStatus === "FAILED"
+                              ? "text-red-600"
+                              : source.indexingStatus === "PROCESSING"
+                                ? "text-[var(--accent)]"
+                                : "text-[var(--muted)]"
+                          )}
+                        >
+                          {formatIndexingStatus(source.indexingStatus)}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Options for ${source.title}`}
+                        onClick={() => setSourceActions(source)}
+                        className="mr-0.5 rounded-lg px-2 py-2 text-[var(--muted)] hover:bg-[var(--border)]/40"
+                      >
+                        ···
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--muted)]">
+              Chats
+            </p>
+            {sortedChats.length === 0 ? (
+              <div className="mx-1 rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-sm text-[var(--muted)]">
+                No chats yet
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-0.5">
+                {sortedChats.map((chat) => {
+                  const active = pathname === `/c/${chat.id}`;
+                  return (
+                    <li key={chat.id}>
+                      <Link
+                        href={`/c/${chat.id}`}
+                        className={cn(
+                          "block truncate rounded-lg px-2 py-2 text-sm",
+                          active
+                            ? "bg-[var(--surface)] font-medium text-[var(--foreground)]"
+                            : "text-[var(--foreground)]/80 hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
+                        )}
+                      >
+                        {chat.title}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {deleteError ? (
+              <p className="px-2 pt-2 text-[11px] text-red-600" role="alert">
+                {deleteError}
+              </p>
+            ) : null}
+          </div>
+        </>
+      )}
 
       <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] px-3 py-3">
         <UserButton />
