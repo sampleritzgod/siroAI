@@ -40,6 +40,7 @@ describe("getOrCreateDefaultNotebookForUser", () => {
       userId: "user_1",
       title: DEFAULT_NOTEBOOK_TITLE,
       description: null,
+      deletedAt: null,
       createdAt: new Date("2026-01-01"),
       updatedAt: new Date("2026-01-01"),
     };
@@ -63,6 +64,7 @@ describe("getOrCreateDefaultNotebookForUser", () => {
       userId: "user_2",
       title: DEFAULT_NOTEBOOK_TITLE,
       description: null,
+      deletedAt: null,
       createdAt: new Date("2026-01-02"),
       updatedAt: new Date("2026-01-02"),
     };
@@ -90,6 +92,7 @@ describe("getOrCreateDefaultNotebookForUser", () => {
       userId: "user_3",
       title: DEFAULT_NOTEBOOK_TITLE,
       description: null,
+      deletedAt: null,
       createdAt: new Date("2026-01-03"),
       updatedAt: new Date("2026-01-03"),
     };

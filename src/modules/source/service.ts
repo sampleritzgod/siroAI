@@ -52,7 +52,7 @@ export type SourceListItem = {
 
 async function assertNotebookOwner(notebookId: string, userId: string) {
   const notebook = await prisma.notebook.findFirst({
-    where: { id: notebookId, userId },
+    where: { id: notebookId, userId, deletedAt: null },
     select: { id: true },
   });
 
@@ -67,7 +67,7 @@ async function assertSourceOwner(sourceId: string, userId: string) {
   const source = await prisma.source.findFirst({
     where: {
       id: sourceId,
-      notebook: { userId },
+      notebook: { userId, deletedAt: null },
     },
   });
 
@@ -119,7 +119,7 @@ export async function listSourcesForNotebook(input: {
 
 export async function listSourcesForUser(userId: string): Promise<SourceListItem[]> {
   const rows = await prisma.source.findMany({
-    where: { notebook: { userId } },
+    where: { notebook: { userId, deletedAt: null } },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -158,7 +158,7 @@ export async function getSourceForUser(input: {
   return prisma.source.findFirst({
     where: {
       id: input.sourceId,
-      notebook: { userId: input.userId },
+      notebook: { userId: input.userId, deletedAt: null },
     },
   });
 }

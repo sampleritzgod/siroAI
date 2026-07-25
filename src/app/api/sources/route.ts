@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     });
 
     const notebook = await prisma.notebook.findFirst({
-      where: { id: notebookId, userId: user.id },
+      where: { id: notebookId, userId: user.id, deletedAt: null },
       select: { id: true },
     });
 

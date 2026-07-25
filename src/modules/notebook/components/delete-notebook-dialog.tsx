@@ -48,8 +48,11 @@ function DeleteNotebookDialogForm({
   onDeleted: (notebookId: string) => void;
 }) {
   const titleId = useId();
+  const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const confirmed =
+    confirmText.trim().toLowerCase() === notebookTitle.trim().toLowerCase();
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -63,7 +66,7 @@ function DeleteNotebookDialogForm({
   }, [isPending, onClose]);
 
   function confirmDelete() {
-    if (isOnlyNotebook) return;
+    if (isOnlyNotebook || !confirmed) return;
     setError(null);
 
     startTransition(() => {
@@ -97,7 +100,7 @@ function DeleteNotebookDialogForm({
         className="relative z-[61] w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl"
       >
         <h2 id={titleId} className="text-lg font-semibold tracking-tight">
-          Delete notebook?
+          Hide notebook?
         </h2>
 
         {isOnlyNotebook ? (
@@ -106,10 +109,25 @@ function DeleteNotebookDialogForm({
             deleting &ldquo;{notebookTitle}&rdquo;.
           </p>
         ) : (
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Delete &ldquo;{notebookTitle}&rdquo;? All conversations in this
-            notebook will be permanently removed.
-          </p>
+          <div className="mt-2 space-y-3 text-sm text-[var(--muted)]">
+            <p>
+              This hides &ldquo;{notebookTitle}&rdquo; from the sidebar. Sources
+              and chat history are kept and can be restored later.
+            </p>
+            <label className="flex flex-col gap-1.5 text-[var(--foreground)]">
+              <span>
+                Type <strong>{notebookTitle}</strong> to confirm
+              </span>
+              <input
+                value={confirmText}
+                onChange={(event) => setConfirmText(event.target.value)}
+                disabled={isPending}
+                autoFocus
+                className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 outline-none focus:border-[var(--accent)]"
+                placeholder={notebookTitle}
+              />
+            </label>
+          </div>
         )}
 
         {error ? (
@@ -130,10 +148,10 @@ function DeleteNotebookDialogForm({
           <button
             type="button"
             onClick={confirmDelete}
-            disabled={isPending || isOnlyNotebook}
+            disabled={isPending || isOnlyNotebook || !confirmed}
             className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
-            {isPending ? "Deleting…" : "Delete"}
+            {isPending ? "Hiding…" : "Hide notebook"}
           </button>
         </div>
       </div>

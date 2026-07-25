@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 import type { ConversationListItem } from "@/modules/conversation/actions/conversation-actions";
 import {
   createNotebookQuick,
+  listDeletedNotebooks,
+  restoreNotebook,
   updateNotebook,
 } from "@/modules/notebook/actions/notebook-actions";
 import { DeleteNotebookDialog } from "@/modules/notebook/components/delete-notebook-dialog";
@@ -61,12 +63,30 @@ export function SourcesPanel({
   );
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [deletedNotebooks, setDeletedNotebooks] = useState<NotebookListItem[]>(
+    []
+  );
+  const [showHidden, setShowHidden] = useState(false);
 
   useEffect(() => {
     if (renamingNotebookId === notebook.id) {
       setNotebookTitle(notebook.title);
     }
   }, [notebook.id, notebook.title, renamingNotebookId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listDeletedNotebooks()
+      .then((rows) => {
+        if (!cancelled) setDeletedNotebooks(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDeletedNotebooks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [notebooks]);
 
   const filteredSources = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -218,7 +238,7 @@ export function SourcesPanel({
                         setNotebookMenuId(null);
                       }}
                     >
-                      Delete
+                      Hide
                     </MenuButton>
                   </div>
                 ) : null}
@@ -230,6 +250,45 @@ export function SourcesPanel({
           <p className="px-2 pt-2 text-[11px] text-red-600" role="alert">
             {createError}
           </p>
+        ) : null}
+
+        {deletedNotebooks.length > 0 ? (
+          <div className="mt-2 border-t border-[var(--border)] pt-2">
+            <button
+              type="button"
+              onClick={() => setShowHidden((value) => !value)}
+              className="w-full px-2 py-1 text-left text-[11px] font-medium uppercase tracking-wider text-[var(--muted)] hover:text-[var(--foreground)]"
+            >
+              Hidden notebooks ({deletedNotebooks.length}){" "}
+              {showHidden ? "▾" : "▸"}
+            </button>
+            {showHidden ? (
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {deletedNotebooks.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex items-center gap-1 rounded-lg px-2 py-1.5"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm text-[var(--muted)]">
+                      {item.title}
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-[11px] text-[var(--accent)] hover:underline"
+                      onClick={() => {
+                        run(async () => {
+                          const restored = await restoreNotebook(item.id);
+                          onSelectNotebook(restored.id);
+                        });
+                      }}
+                    >
+                      Restore
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

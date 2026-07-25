@@ -9,6 +9,7 @@ export type NotebookRecord = {
   userId: string;
   title: string;
   description: string | null;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -21,9 +22,9 @@ export type NotebookListItem = {
   updatedAt: Date;
 };
 
-async function assertNotebookOwner(notebookId: string, userId: string) {
+async function assertActiveNotebookOwner(notebookId: string, userId: string) {
   const notebook = await prisma.notebook.findFirst({
-    where: { id: notebookId, userId },
+    where: { id: notebookId, userId, deletedAt: null },
   });
 
   if (!notebook) {
@@ -62,7 +63,11 @@ export async function getNotebookForUser(input: {
   notebookId: string;
 }): Promise<NotebookRecord | null> {
   return prisma.notebook.findFirst({
-    where: { id: input.notebookId, userId: input.userId },
+    where: {
+      id: input.notebookId,
+      userId: input.userId,
+      deletedAt: null,
+    },
   });
 }
 
@@ -70,7 +75,7 @@ export async function getUserNotebooksForUser(
   userId: string
 ): Promise<NotebookListItem[]> {
   return prisma.notebook.findMany({
-    where: { userId },
+    where: { userId, deletedAt: null },
     orderBy: { updatedAt: "desc" },
     select: {
       id: true,
@@ -88,7 +93,7 @@ export async function updateNotebookForUser(input: {
   title?: string;
   description?: string | null;
 }): Promise<NotebookRecord> {
-  await assertNotebookOwner(input.notebookId, input.userId);
+  await assertActiveNotebookOwner(input.notebookId, input.userId);
 
   const data: { title?: string; description?: string | null } = {};
 
@@ -118,14 +123,17 @@ export async function updateNotebookForUser(input: {
   });
 }
 
+/**
+ * Soft-deletes a notebook. Sources, chats, and history stay in the database.
+ */
 export async function deleteNotebookForUser(input: {
   userId: string;
   notebookId: string;
 }): Promise<void> {
-  await assertNotebookOwner(input.notebookId, input.userId);
+  await assertActiveNotebookOwner(input.notebookId, input.userId);
 
   const notebookCount = await prisma.notebook.count({
-    where: { userId: input.userId },
+    where: { userId: input.userId, deletedAt: null },
   });
 
   if (notebookCount <= 1) {
@@ -134,7 +142,49 @@ export async function deleteNotebookForUser(input: {
     );
   }
 
-  await prisma.notebook.delete({
+  await prisma.notebook.update({
     where: { id: input.notebookId },
+    data: { deletedAt: new Date() },
+  });
+}
+
+/**
+ * Restores a soft-deleted notebook and its sources/chats/history.
+ */
+export async function restoreNotebookForUser(input: {
+  userId: string;
+  notebookId: string;
+}): Promise<NotebookRecord> {
+  const notebook = await prisma.notebook.findFirst({
+    where: {
+      id: input.notebookId,
+      userId: input.userId,
+      deletedAt: { not: null },
+    },
+  });
+
+  if (!notebook) {
+    throw new Error("Deleted notebook not found");
+  }
+
+  return prisma.notebook.update({
+    where: { id: notebook.id },
+    data: { deletedAt: null },
+  });
+}
+
+export async function listDeletedNotebooksForUser(
+  userId: string
+): Promise<NotebookListItem[]> {
+  return prisma.notebook.findMany({
+    where: { userId, deletedAt: { not: null } },
+    orderBy: { deletedAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 }

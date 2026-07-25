@@ -4,7 +4,7 @@ import type { NotebookRecord } from "@/modules/notebook/service";
 
 type NotebookDelegate = {
   findFirst: (args: {
-    where: { userId: string; title: string };
+    where: { userId: string; title: string; deletedAt?: null };
     orderBy: { createdAt: "asc" };
   }) => Promise<NotebookRecord | null>;
   create: (args: {
@@ -32,7 +32,7 @@ export async function getOrCreateDefaultNotebookForUser(
   client: NotebookDelegate = prisma.notebook
 ): Promise<NotebookRecord> {
   const existing = await client.findFirst({
-    where: { userId, title: DEFAULT_NOTEBOOK_TITLE },
+    where: { userId, title: DEFAULT_NOTEBOOK_TITLE, deletedAt: null },
     orderBy: { createdAt: "asc" },
   });
 
@@ -49,7 +49,7 @@ export async function getOrCreateDefaultNotebookForUser(
     });
   } catch {
     const raced = await client.findFirst({
-      where: { userId, title: DEFAULT_NOTEBOOK_TITLE },
+      where: { userId, title: DEFAULT_NOTEBOOK_TITLE, deletedAt: null },
       orderBy: { createdAt: "asc" },
     });
     if (raced) {
@@ -76,7 +76,7 @@ export async function resolveNotebookIdForUser(input: {
   }
 
   const notebook = await prisma.notebook.findFirst({
-    where: { id: requested, userId: input.userId },
+    where: { id: requested, userId: input.userId, deletedAt: null },
     select: { id: true },
   });
 

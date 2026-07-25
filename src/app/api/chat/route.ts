@@ -112,7 +112,7 @@ export async function POST(req: Request) {
       where: {
         id,
         userId: user.id,
-        notebook: { userId: user.id },
+        notebook: { userId: user.id, deletedAt: null },
       },
       select: {
         id: true,
@@ -128,7 +128,11 @@ export async function POST(req: Request) {
     }
 
     const notebook = await prisma.notebook.findFirst({
-      where: { id: conversation.notebookId, userId: user.id },
+      where: {
+        id: conversation.notebookId,
+        userId: user.id,
+        deletedAt: null,
+      },
       select: { id: true },
     });
 

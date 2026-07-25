@@ -11,7 +11,7 @@ export async function findOwnedConversation(
     where: {
       id: conversationId,
       userId,
-      notebook: { userId },
+      notebook: { userId, deletedAt: null },
     },
   });
 }

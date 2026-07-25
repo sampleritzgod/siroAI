@@ -8,6 +8,8 @@ import {
   deleteNotebookForUser,
   getNotebookForUser,
   getUserNotebooksForUser,
+  listDeletedNotebooksForUser,
+  restoreNotebookForUser,
   updateNotebookForUser,
   type NotebookListItem,
   type NotebookRecord,
@@ -86,13 +88,29 @@ export async function updateNotebook(input: {
 }
 
 /**
- * Deletes a notebook owned by the signed-in user.
- * Refuses to delete the user's only notebook.
+ * Soft-deletes a notebook owned by the signed-in user.
+ * Sources and chat history are preserved for restore.
+ * Refuses to delete the user's only active notebook.
  */
 export async function deleteNotebook(id: string): Promise<void> {
   const user = await requireUser();
   await deleteNotebookForUser({ userId: user.id, notebookId: id });
   revalidatePath("/");
+}
+
+export async function listDeletedNotebooks(): Promise<NotebookListItem[]> {
+  const user = await requireUser();
+  return listDeletedNotebooksForUser(user.id);
+}
+
+export async function restoreNotebook(id: string): Promise<NotebookRecord> {
+  const user = await requireUser();
+  const notebook = await restoreNotebookForUser({
+    userId: user.id,
+    notebookId: id,
+  });
+  revalidatePath("/");
+  return notebook;
 }
 
 /**
