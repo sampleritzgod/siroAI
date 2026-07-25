@@ -65,3 +65,5 @@ Desktop.ini
 .turbo/
 .cache/
 *.eslintcache
+.vercel
+.env*
