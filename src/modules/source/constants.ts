@@ -2,10 +2,11 @@ import { MAX_UPLOAD_BYTES } from "@/modules/files/constants";
 
 export { MAX_UPLOAD_BYTES };
 
-/** Source library allows PDF and plain text only (website uses URL path). */
+/** Source library file uploads (website / YouTube use the URL path). */
 export const SOURCE_ALLOWED_MEDIA_TYPES = [
   "application/pdf",
   "text/plain",
+  "text/vtt",
 ] as const;
 
 export type SourceAllowedMediaType =
@@ -31,8 +32,10 @@ export function isSourceAllowedMediaType(
 
 export function sourceTypeFromMediaType(
   mediaType: SourceAllowedMediaType
-): "PDF" | "TEXT" {
-  return mediaType === "application/pdf" ? "PDF" : "TEXT";
+): "PDF" | "TEXT" | "VTT" {
+  if (mediaType === "application/pdf") return "PDF";
+  if (mediaType === "text/vtt") return "VTT";
+  return "TEXT";
 }
 
 export function defaultTitleFromFilename(filename: string): string {
@@ -48,19 +51,24 @@ export function isRemoteStoragePath(storagePath: string): boolean {
 
 /**
  * Resolve a source MIME type from the browser File.
- * Many browsers leave `file.type` empty (or octet-stream) for .txt/.pdf —
+ * Many browsers leave `file.type` empty (or octet-stream) for .txt/.pdf/.vtt —
  * fall back to the filename extension so uploads are not rejected.
  */
 export function resolveSourceMediaType(input: {
   filename: string;
   fileType?: string | null;
 }): SourceAllowedMediaType | null {
+  const lowerName = input.filename.trim().toLowerCase();
+
+  // Extension wins for .vtt: browsers often report it as text/plain, which
+  // would skip subtitle parsing and embed raw timestamps.
+  if (lowerName.endsWith(".vtt")) return "text/vtt";
+
   const declared = (input.fileType ?? "").trim().toLowerCase();
   if (isSourceAllowedMediaType(declared)) {
     return declared;
   }
 
-  const lowerName = input.filename.trim().toLowerCase();
   if (lowerName.endsWith(".pdf")) return "application/pdf";
   if (lowerName.endsWith(".txt")) return "text/plain";
 
@@ -84,6 +92,9 @@ export function formatSourceUploadError(error: unknown): string {
     if (/website/i.test(message)) {
       return "This website is already added to the notebook.";
     }
+    return message;
+  }
+  if (/invalid vtt|corrupted vtt|empty vtt/i.test(message)) {
     return message;
   }
   if (/invalid youtube url|unsupported youtube url/i.test(message)) {
@@ -141,8 +152,9 @@ export function formatSourceUploadError(error: unknown): string {
   }
   if (/website content is too large/i.test(message)) {
     return "Website content is too large";
-  }  if (/unsupported file type/i.test(message)) {
-    return "Unsupported file type. Only PDF and plain text are allowed.";
+  }
+  if (/unsupported file type/i.test(message)) {
+    return "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed.";
   }
   if (/too large|between 1 byte|file must be/i.test(message)) {
     return message.includes("MB")

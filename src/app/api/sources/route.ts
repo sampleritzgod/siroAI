@@ -69,6 +69,9 @@ function mapUploadError(message: string) {
   if (/unsupported file type|unsupported content type/i.test(message)) {
     return jsonError(message, 415);
   }
+  if (/invalid vtt|corrupted vtt|empty vtt/i.test(message)) {
+    return jsonError(message, 422);
+  }
   if (/too large|file is empty|website content is too large/i.test(message)) {
     return jsonError(message, 413);
   }

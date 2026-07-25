@@ -33,6 +33,20 @@ import {
   toYoutubeMetadata,
   type YoutubeSourceMetadata,
 } from "@/modules/source/fetch-youtube";
+import {
+  defaultTitleFromVttFilename,
+  parseVtt,
+  toVttMetadata,
+  type ParsedVtt,
+  type VttSourceMetadata,
+} from "@/modules/source/parse-vtt";
+
+/**
+ * Source.metadata is source-type specific. Fields are optional so one type can
+ * describe every variant (YouTube video info, VTT cue info).
+ */
+export type SourceMetadata = Partial<YoutubeSourceMetadata> &
+  Partial<VttSourceMetadata>;
 
 export type SourceRecord = {
   id: string;
@@ -44,7 +58,7 @@ export type SourceRecord = {
   fileSize: number;
   storagePath: string;
   url: string | null;
-  metadata: YoutubeSourceMetadata | null;
+  metadata: SourceMetadata | null;
   extractedText: string | null;
   indexingStatus: SourceIndexingStatus;
   createdAt: Date;
@@ -60,7 +74,7 @@ export type SourceListItem = {
   mimeType: string;
   fileSize: number;
   url: string | null;
-  metadata: YoutubeSourceMetadata | null;
+  metadata: SourceMetadata | null;
   indexingStatus: SourceIndexingStatus;
   hasExtractedText: boolean;
   createdAt: Date;
@@ -119,22 +133,34 @@ async function failStaleProcessingSources(where: {
   });
 }
 
-function parseSourceMetadata(
-  value: unknown
-): YoutubeSourceMetadata | null {
+function parseSourceMetadata(value: unknown): SourceMetadata | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.videoId !== "string") return null;
-  return {
-    videoId: record.videoId,
-    channel: typeof record.channel === "string" ? record.channel : null,
-    thumbnailUrl:
-      typeof record.thumbnailUrl === "string" ? record.thumbnailUrl : null,
+
+  const metadata: SourceMetadata = {
     durationSeconds:
       typeof record.durationSeconds === "number"
         ? record.durationSeconds
         : null,
   };
+
+  if (typeof record.videoId === "string") {
+    metadata.videoId = record.videoId;
+    metadata.channel =
+      typeof record.channel === "string" ? record.channel : null;
+    metadata.thumbnailUrl =
+      typeof record.thumbnailUrl === "string" ? record.thumbnailUrl : null;
+  }
+
+  if (typeof record.cueCount === "number") {
+    metadata.cueCount = record.cueCount;
+    metadata.language =
+      typeof record.language === "string" ? record.language : null;
+  }
+
+  const isKnownShape =
+    metadata.videoId != null || metadata.cueCount != null;
+  return isKnownShape ? metadata : null;
 }
 
 function toSourceRecord(row: {
@@ -313,6 +339,30 @@ export async function getSourceForUser(input: {
 }
 
 /**
+ * Subtitle files carry no URL to dedupe on, so treat an identical filename and
+ * byte size within the same notebook as a re-upload of the same file.
+ */
+async function assertNoDuplicateVtt(input: {
+  notebookId: string;
+  originalFileName: string;
+  fileSize: number;
+}) {
+  const duplicate = await prisma.source.findFirst({
+    where: {
+      notebookId: input.notebookId,
+      type: "VTT",
+      originalFileName: input.originalFileName,
+      fileSize: input.fileSize,
+    },
+    select: { id: true },
+  });
+
+  if (duplicate) {
+    throw new Error("This subtitle file is already added to the notebook.");
+  }
+}
+
+/**
  * Upload → store → extract.
  * Returns PROCESSING quickly so the client can show indexing progress.
  * Call finalizeSourceIndexing (usually via after()) for chunk → embed → INDEXED.
@@ -345,7 +395,7 @@ export async function createSourceFromUpload(input: {
       declaredType: input.file.type,
     });
     throw new Error(
-      "Unsupported file type. Only PDF and plain text are allowed."
+      "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
     );
   }
 
@@ -366,7 +416,43 @@ export async function createSourceFromUpload(input: {
 
   const bytes = Buffer.from(await input.file.arrayBuffer());
   const type = sourceTypeFromMediaType(mediaType);
-  const title = defaultTitleFromFilename(originalFileName);
+  const title =
+    type === "VTT"
+      ? defaultTitleFromVttFilename(originalFileName)
+      : defaultTitleFromFilename(originalFileName);
+
+  // Subtitle files are parsed up front so an invalid .vtt fails before we store
+  // the file or create a row. Other types keep the existing extract-after-store
+  // flow (PDF extraction needs the file on disk).
+  let parsedVtt: ParsedVtt | null = null;
+  if (type === "VTT") {
+    await assertNoDuplicateVtt({
+      notebookId: input.notebookId,
+      originalFileName,
+      fileSize: bytes.length,
+    });
+
+    const extractStage = stageLog("EXTRACT");
+    extractStage.started({
+      notebookId: input.notebookId,
+      mimeType: mediaType,
+      kind: "vtt",
+    });
+    try {
+      parsedVtt = parseVtt(bytes.toString("utf8"));
+    } catch (error) {
+      extractStage.error(error, { filename: originalFileName });
+      uploadStage.error(error, { filename: originalFileName });
+      throw error instanceof Error
+        ? error
+        : new Error("Invalid VTT file: could not parse subtitles.");
+    }
+    extractStage.completed({
+      chars: parsedVtt.transcript.length,
+      cueCount: parsedVtt.cueCount,
+      language: parsedVtt.language,
+    });
+  }
 
   const sourceStage = stageLog("SOURCE");
   sourceStage.started({
@@ -428,20 +514,26 @@ export async function createSourceFromUpload(input: {
     });
 
     let extractedText: string | null = null;
-    try {
-      const extracted = await extractAttachmentContent({
-        attachmentId: pending.id,
-        filename: originalFileName,
-        mediaType,
-        bytes,
-      });
-      extractedText = extracted.extractedText?.trim() || null;
-    } catch (error) {
-      extractStage.error(error, { sourceId: pending.id });
-      if (mediaType === "application/pdf") {
-        throw new Error("PDF extraction failed");
+    if (parsedVtt) {
+      // Already parsed above; skip generic text extraction so cue timings and
+      // metadata never reach the embeddings.
+      extractedText = parsedVtt.transcript;
+    } else {
+      try {
+        const extracted = await extractAttachmentContent({
+          attachmentId: pending.id,
+          filename: originalFileName,
+          mediaType,
+          bytes,
+        });
+        extractedText = extracted.extractedText?.trim() || null;
+      } catch (error) {
+        extractStage.error(error, { sourceId: pending.id });
+        if (mediaType === "application/pdf") {
+          throw new Error("PDF extraction failed");
+        }
+        throw new Error("Text extraction failed");
       }
-      throw new Error("Text extraction failed");
     }
 
     if (!extractedText) {
@@ -483,6 +575,7 @@ export async function createSourceFromUpload(input: {
       data: {
         storagePath: stored.storageKey,
         extractedText,
+        ...(parsedVtt ? { metadata: toVttMetadata(parsedVtt) } : {}),
         indexingStatus: "PROCESSING",
       },
     });

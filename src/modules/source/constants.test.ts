@@ -10,9 +10,10 @@ import {
 } from "@/modules/source/constants";
 
 describe("source constants", () => {
-  it("allows only PDF and plain text", () => {
+  it("allows only PDF, plain text, and VTT", () => {
     assert.equal(isSourceAllowedMediaType("application/pdf"), true);
     assert.equal(isSourceAllowedMediaType("text/plain"), true);
+    assert.equal(isSourceAllowedMediaType("text/vtt"), true);
     assert.equal(isSourceAllowedMediaType("text/markdown"), false);
     assert.equal(isSourceAllowedMediaType("image/png"), false);
   });
@@ -20,6 +21,7 @@ describe("source constants", () => {
   it("maps media types to source types", () => {
     assert.equal(sourceTypeFromMediaType("application/pdf"), "PDF");
     assert.equal(sourceTypeFromMediaType("text/plain"), "TEXT");
+    assert.equal(sourceTypeFromMediaType("text/vtt"), "VTT");
   });
 
   it("derives titles from filenames", () => {
@@ -48,6 +50,19 @@ describe("source constants", () => {
       resolveSourceMediaType({ filename: "x.png", fileType: "" }),
       null
     );
+    assert.equal(
+      resolveSourceMediaType({ filename: "captions.vtt", fileType: "" }),
+      "text/vtt"
+    );
+    // Browsers often mislabel .vtt as text/plain; extension must win so the
+    // subtitle parser runs instead of embedding raw timestamps.
+    assert.equal(
+      resolveSourceMediaType({
+        filename: "captions.vtt",
+        fileType: "text/plain",
+      }),
+      "text/vtt"
+    );
   });
 
   it("formats upload errors into useful messages", () => {
@@ -57,7 +72,7 @@ describe("source constants", () => {
     );
     assert.equal(
       formatSourceUploadError(new Error("Unsupported file type")),
-      "Unsupported file type. Only PDF and plain text are allowed."
+      "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
     );
     assert.equal(
       formatSourceUploadError(new Error("PDF parsing boom")),

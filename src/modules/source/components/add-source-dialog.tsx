@@ -64,6 +64,7 @@ function AddSourceDialogForm({
   const titleId = useId();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
+  const vttInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"menu" | "website" | "youtube">("menu");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +129,7 @@ function AddSourceDialogForm({
       fileType: file.type,
     });
     if (!mediaType) {
-      return "Unsupported file type. Only PDF and plain text are allowed.";
+      return "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed.";
     }
     return null;
   }
@@ -228,7 +229,7 @@ function AddSourceDialogForm({
           (response.status === 413
             ? `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
             : response.status === 415
-              ? "Unsupported file type. Only PDF and plain text are allowed."
+              ? "Unsupported file type. Only PDF, plain text, and VTT subtitles are allowed."
               : response.status === 409
                 ? "This source is already added to the notebook."
                 : response.status === 422
@@ -281,7 +282,7 @@ function AddSourceDialogForm({
               ? "Paste a youtube.com or youtu.be link. The transcript will be indexed for chat."
               : mode === "website"
                 ? "Paste a public page URL. Readable text will be indexed for chat."
-                : "Upload a PDF or text file, or add a website / YouTube URL."}
+                : "Upload a PDF, text, or .vtt subtitle file, or add a website / YouTube URL."}
         </p>
 
         {isUploading ? (
@@ -404,6 +405,16 @@ function AddSourceDialogForm({
                 event.target.value = "";
               }}
             />
+            <input
+              ref={vttInputRef}
+              type="file"
+              accept="text/vtt,.vtt"
+              className="hidden"
+              onChange={(event) => {
+                void uploadFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
 
             <button
               type="button"
@@ -418,6 +429,13 @@ function AddSourceDialogForm({
               className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
             >
               Upload Text File
+            </button>
+            <button
+              type="button"
+              onClick={() => vttInputRef.current?.click()}
+              className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
+            >
+              Upload Subtitles (.vtt)
             </button>
             <button
               type="button"

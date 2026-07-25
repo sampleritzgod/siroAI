@@ -52,6 +52,12 @@ export function SourceMetadataDialog({
           },
         ]
       : []),
+    ...(source.metadata?.cueCount != null
+      ? [{ label: "Cues", value: String(source.metadata.cueCount) }]
+      : []),
+    ...(source.metadata?.language
+      ? [{ label: "Language", value: source.metadata.language }]
+      : []),
     { label: "MIME type", value: source.mimeType },
     { label: "Size", value: formatBytes(source.fileSize) },
     { label: "Status", value: formatIndexingStatus(source.indexingStatus) },

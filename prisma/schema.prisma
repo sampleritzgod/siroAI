@@ -51,6 +51,7 @@ enum SourceType {
   TEXT
   WEBSITE
   YOUTUBE
+  VTT
 }
 
 enum SourceIndexingStatus {
@@ -61,7 +62,7 @@ enum SourceIndexingStatus {
 }
 
 /**
- * Notebook knowledge source (PDF / plain text / website / YouTube).
+ * Notebook knowledge source (PDF / plain text / website / YouTube / VTT).
  * Separate from chat Attachments.
  */
 model Source {
