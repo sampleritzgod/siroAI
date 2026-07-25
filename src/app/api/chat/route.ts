@@ -36,6 +36,8 @@ import { createChatTools } from "@/modules/ai/tools";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import { prepareMessagesForModel } from "@/modules/files/prepare-messages";
 import { conversationHasIndexedChunks } from "@/modules/rag/index-attachment";
+import { notebookHasIndexedChunks } from "@/modules/rag/index-source";
+import { stageLog } from "@/modules/rag/pipeline-log";
 import {
   formatRetrievedContext,
   retrieveRelevantChunks,
@@ -112,11 +114,34 @@ export async function POST(req: Request) {
         userId: user.id,
         notebook: { userId: user.id },
       },
+      select: {
+        id: true,
+        notebookId: true,
+        model: true,
+        systemPrompt: true,
+        activeBranchId: true,
+      },
     });
 
     if (!conversation) {
       return jsonError("Conversation not found", 404);
     }
+
+    const notebook = await prisma.notebook.findFirst({
+      where: { id: conversation.notebookId, userId: user.id },
+      select: { id: true },
+    });
+
+    if (!notebook) {
+      return jsonError("Notebook not found", 404);
+    }
+
+    const indexedSourceCount = await prisma.source.count({
+      where: {
+        notebookId: notebook.id,
+        indexingStatus: "INDEXED",
+      },
+    });
 
     const modelId = resolveConfiguredModelId(conversation.model);
 
@@ -211,12 +236,40 @@ export async function POST(req: Request) {
     });
 
     const tools = toolsEnabled
-      ? createChatTools({ conversationId: id })
+      ? createChatTools({
+          conversationId: id,
+          notebookId: notebook.id,
+        })
       : undefined;
 
+    const retrieveStage = stageLog("RETRIEVE");
+    const promptStage = stageLog("PROMPT");
+    const llmStage = stageLog("LLM");
+    const streamStage = stageLog("STREAM");
+    const responseStage = stageLog("RESPONSE");
+
     let ragContext = "";
+    let retrievedCount = 0;
     try {
-      if (await conversationHasIndexedChunks(id)) {
+      const hasNotebookChunks = await notebookHasIndexedChunks(notebook.id);
+      const hasAttachmentChunks = await conversationHasIndexedChunks(id);
+
+      if (!hasNotebookChunks && !hasAttachmentChunks) {
+        if (indexedSourceCount === 0) {
+          logger.warn("[RETRIEVE] no_indexed_sources", {
+            requestId,
+            conversationId: id,
+            notebookId: notebook.id,
+          });
+        } else {
+          logger.warn("[RETRIEVE] embeddings_missing", {
+            requestId,
+            conversationId: id,
+            notebookId: notebook.id,
+            indexedSourceCount,
+          });
+        }
+      } else {
         const latestUserText = [...messages]
           .reverse()
           .find((item) => item.role === "user")
@@ -228,18 +281,40 @@ export async function POST(req: Request) {
         if (latestUserText) {
           const chunks = await retrieveRelevantChunks({
             conversationId: id,
+            notebookId: notebook.id,
             query: latestUserText,
             limit: 6,
           });
+          retrievedCount = chunks.length;
           ragContext = formatRetrievedContext(chunks);
+
+          if (chunks.length === 0) {
+            logger.warn("[RETRIEVE] zero_chunks", {
+              requestId,
+              conversationId: id,
+              notebookId: notebook.id,
+              reason: "Retrieval returned zero chunks",
+            });
+            ragContext = [
+              "Retrieved notebook document context:",
+              "Retrieval returned zero chunks for this question.",
+              "Say clearly that the information is not present in the notebook sources.",
+            ].join("\n");
+          }
         }
       }
     } catch (error) {
-      logger.warn("chat_rag_retrieve_failed", {
+      retrieveStage.error(error, {
         requestId,
         conversationId: id,
-        error: error instanceof Error ? error.message : String(error),
+        notebookId: notebook.id,
       });
+      return jsonError(
+        error instanceof Error
+          ? `Retrieval failed: ${error.message}`
+          : "Retrieval failed",
+        500
+      );
     }
 
     const modelMessages = await convertToModelMessages(modelReadyMessages, {
@@ -250,15 +325,54 @@ export async function POST(req: Request) {
     const baseSystem = conversation.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     const system = ragContext
       ? `${baseSystem}\n\n${ragContext}`
-      : baseSystem;
+      : indexedSourceCount > 0
+        ? `${baseSystem}\n\nNotebook sources exist but no retrieved context was injected. Do not invent document contents. If asked about sources, say retrieval returned no usable context.`
+        : baseSystem;
+
+    promptStage.started({
+      requestId,
+      conversationId: id,
+      notebookId: notebook.id,
+    });
+    promptStage.completed({
+      requestId,
+      conversationId: id,
+      notebookId: notebook.id,
+      hasRetrievedContext: Boolean(ragContext),
+      retrievedCount,
+      systemChars: system.length,
+      contextInjected: ragContext.length > 0,
+    });
+
+    llmStage.started({
+      requestId,
+      conversationId: id,
+      modelId,
+    });
+    streamStage.started({
+      requestId,
+      conversationId: id,
+      branchId: resolvedBranchId,
+    });
+    responseStage.started({
+      requestId,
+      conversationId: id,
+      notebookId: notebook.id,
+    });
 
     logger.info("chat_stream_start", {
       requestId,
       userId: user.id,
       conversationId: id,
+      notebookId: notebook.id,
       branchId: resolvedBranchId,
       modelId,
+      retrievedCount,
+      indexedSourceCount,
     });
+
+    const streamStartedAt = Date.now();
+    let firstTokenLogged = false;
 
     const result = streamText({
       model: getLanguageModel(modelId),
@@ -282,7 +396,21 @@ export async function POST(req: Request) {
           }
         : {}),
       abortSignal: req.signal,
+      onChunk: () => {
+        if (!firstTokenLogged) {
+          firstTokenLogged = true;
+          logger.info("[STREAM] first_token", {
+            requestId,
+            conversationId: id,
+            firstTokenMs: Date.now() - streamStartedAt,
+          });
+        }
+      },
       onAbort: () => {
+        streamStage.error(new Error("aborted"), {
+          requestId,
+          conversationId: id,
+        });
         logger.info("chat_stream_aborted", {
           requestId,
           conversationId: id,
@@ -301,6 +429,25 @@ export async function POST(req: Request) {
           outputTokens,
           requestId,
           metadata: { finishReason, branchId: resolvedBranchId },
+        });
+
+        llmStage.completed({
+          requestId,
+          conversationId: id,
+          finishReason,
+          inputTokens,
+          outputTokens,
+        });
+        streamStage.completed({
+          requestId,
+          conversationId: id,
+          finishReason,
+        });
+        responseStage.completed({
+          requestId,
+          conversationId: id,
+          retrievedCount,
+          finishReason,
         });
 
         logger.info("chat_stream_finish", {

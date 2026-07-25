@@ -34,16 +34,16 @@ describe("notebook readiness", () => {
     );
   });
 
-  it("treats legacy PENDING sources with text as ready", () => {
+  it("does not treat PENDING sources as ready without embeddings", () => {
     assert.equal(
       isSourceReady(
         source({ id: "1", indexingStatus: "PENDING", hasExtractedText: true })
       ),
-      true
+      false
     );
   });
 
-  it("requires at least one ready source for notebook readiness", () => {
+  it("requires at least one INDEXED source for notebook readiness", () => {
     assert.equal(isNotebookReady([]), false);
     assert.equal(
       isNotebookReady([
@@ -52,6 +52,12 @@ describe("notebook readiness", () => {
           indexingStatus: "PROCESSING",
           hasExtractedText: false,
         }),
+      ]),
+      false
+    );
+    assert.equal(
+      isNotebookReady([
+        source({ id: "1", indexingStatus: "PENDING", hasExtractedText: true }),
       ]),
       false
     );

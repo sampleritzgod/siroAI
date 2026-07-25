@@ -5,10 +5,13 @@ import { webSearchTool } from "./web-search";
  * Server-only chat tool registry (includes DB-backed ragSearch).
  * Client UI must import types from `./types` or `./rag-types`, not this barrel.
  */
-export function createChatTools(input: { conversationId: string }) {
+export function createChatTools(input: {
+  conversationId: string;
+  notebookId: string;
+}) {
   return {
     webSearch: webSearchTool,
-    ragSearch: createRagSearchTool(input.conversationId),
+    ragSearch: createRagSearchTool(input),
   };
 }
 

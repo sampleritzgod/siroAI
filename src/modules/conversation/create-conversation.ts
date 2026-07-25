@@ -22,19 +22,13 @@ export async function createConversationForUser(input: CreateConversationInput) 
   const readySourceCount = await prisma.source.count({
     where: {
       notebookId,
-      OR: [
-        { indexingStatus: "INDEXED" },
-        {
-          indexingStatus: "PENDING",
-          extractedText: { not: null },
-        },
-      ],
+      indexingStatus: "INDEXED",
     },
   });
 
   if (readySourceCount === 0) {
     throw new Error(
-      "Add and index at least one source before starting a chat."
+      "Add and index at least one source before starting a chat. No indexed sources found."
     );
   }
 

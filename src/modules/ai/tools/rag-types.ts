@@ -3,7 +3,8 @@
  */
 
 export type RagSearchResultItem = {
-  attachmentId: string;
+  attachmentId: string | null;
+  sourceId: string | null;
   filename: string;
   chunkIndex: number;
   snippet: string;

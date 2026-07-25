@@ -1,16 +1,10 @@
 import type { SourceListItem } from "@/modules/source/service";
 
 /**
- * A source is usable for chat once indexing finished successfully.
- * PENDING + extracted text covers legacy rows created before INDEXED
- * was the terminal success status.
+ * A source is usable for chat only after embeddings are persisted (INDEXED).
  */
 export function isSourceReady(source: SourceListItem): boolean {
-  if (source.indexingStatus === "INDEXED") return true;
-  if (source.indexingStatus === "PENDING" && source.hasExtractedText) {
-    return true;
-  }
-  return false;
+  return source.indexingStatus === "INDEXED";
 }
 
 export function isNotebookReady(sources: SourceListItem[]): boolean {

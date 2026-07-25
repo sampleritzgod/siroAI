@@ -1,6 +1,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { RagSearchToolResult } from "@/modules/ai/tools/rag-types";
+import { notebookHasIndexedChunks } from "@/modules/rag/index-source";
+import { conversationHasIndexedChunks } from "@/modules/rag/index-attachment";
 import {
   formatRetrievedContext,
   retrieveRelevantChunks,
@@ -21,20 +23,23 @@ const ragSearchInputSchema = z.object({
     .min(1)
     .max(300)
     .describe(
-      "What to look up in uploaded conversation documents (keywords or a short question)."
+      "What to look up in notebook sources or uploaded conversation documents (keywords or a short question)."
     ),
   limit: z.number().int().min(1).max(8).optional(),
 });
 
 /**
- * Search indexed attachments in the current conversation (pgvector RAG).
+ * Search indexed notebook sources + conversation attachments (pgvector RAG).
  * Server-only — do not import from client components.
  */
-export function createRagSearchTool(conversationId: string) {
+export function createRagSearchTool(input: {
+  conversationId: string;
+  notebookId: string;
+}) {
   return tool({
     description: [
-      "Search documents the user uploaded in this conversation.",
-      "Use when the question is about an attached PDF, text file, or earlier uploaded material.",
+      "Search documents in this notebook and any files uploaded in this conversation.",
+      "Use when the question is about notebook sources, attached PDFs, or earlier uploaded material.",
       "Prefer this over guessing file contents. Cite returned sources by filename.",
     ].join(" "),
     inputSchema: ragSearchInputSchema,
@@ -50,8 +55,26 @@ export function createRagSearchTool(conversationId: string) {
       }
 
       try {
+        const hasNotebookChunks = await notebookHasIndexedChunks(
+          input.notebookId
+        );
+        const hasAttachmentChunks = await conversationHasIndexedChunks(
+          input.conversationId
+        );
+
+        if (!hasNotebookChunks && !hasAttachmentChunks) {
+          return {
+            ok: false,
+            query: parsed.data.query,
+            code: "NOT_INDEXED",
+            error:
+              "No indexed sources found. Upload and index at least one notebook source.",
+          };
+        }
+
         const chunks = await retrieveRelevantChunks({
-          conversationId,
+          conversationId: input.conversationId,
+          notebookId: input.notebookId,
           query: parsed.data.query,
           limit: parsed.data.limit ?? 6,
         });
@@ -62,7 +85,7 @@ export function createRagSearchTool(conversationId: string) {
             query: parsed.data.query,
             code: "NO_RESULTS",
             error:
-              "No indexed document chunks matched. The file may still be indexing, or it has no extractable text.",
+              "Retrieval returned zero chunks. The information may not be present in the notebook sources.",
           };
         }
 
@@ -71,6 +94,7 @@ export function createRagSearchTool(conversationId: string) {
           query: parsed.data.query,
           results: chunks.map((chunk) => ({
             attachmentId: chunk.attachmentId,
+            sourceId: chunk.sourceId,
             filename: chunk.filename,
             chunkIndex: chunk.chunkIndex,
             snippet: chunk.content.slice(0, 280),

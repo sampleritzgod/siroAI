@@ -34,9 +34,10 @@ model Notebook {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
-  sources       Source[]
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations  Conversation[]
+  sources        Source[]
+  documentChunks DocumentChunk[]
 
   @@index([userId, updatedAt(sort: Desc)])
   @@index([userId, title])
@@ -71,7 +72,8 @@ model Source {
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 
-  notebook Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  notebook Notebook        @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  chunks   DocumentChunk[]
 
   @@index([notebookId, createdAt(sort: Desc)])
   @@index([notebookId, indexingStatus])
@@ -242,22 +244,32 @@ model UsageEvent {
 }
 
 /**
- * Embedded text chunk for conversation-scoped RAG (pgvector).
+ * Embedded text chunk for RAG (pgvector).
+ * Either conversation attachment OR notebook source ownership:
+ *   - attachment chunks: conversationId + attachmentId
+ *   - source chunks: notebookId + sourceId
  * embedding is vector(1536) for OpenAI text-embedding-3-small.
  */
 model DocumentChunk {
   id             String                       @id @default(cuid())
-  conversationId String
-  attachmentId   String
+  conversationId String?
+  attachmentId   String?
+  notebookId     String?
+  sourceId       String?
   chunkIndex     Int
   content        String                       @db.Text
   embedding      Unsupported("vector(1536)")
   createdAt      DateTime                     @default(now())
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  attachment   Attachment   @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachment   Attachment?   @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  notebook     Notebook?     @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  source       Source?       @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@unique([attachmentId, chunkIndex])
+  @@unique([sourceId, chunkIndex])
   @@index([conversationId])
   @@index([attachmentId])
+  @@index([notebookId])
+  @@index([sourceId])
 }

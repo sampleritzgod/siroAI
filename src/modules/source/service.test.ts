@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { prisma } from "@/lib/db";
 import { createNotebookForUser } from "@/modules/notebook/service";
+import { countSourceChunks } from "@/modules/rag/index-source";
 import {
   createSourceFromUpload,
   deleteSourceForUser,
@@ -13,12 +14,17 @@ import {
 } from "@/modules/source/service";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
+const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
 
 function makeTextFile(name: string, contents: string) {
   return new File([contents], name, { type: "text/plain" });
 }
 
-describe("source service", { skip: !hasDatabase }, () => {
+const LONG_NOTE =
+  "Attention is all you need. Transformers use self-attention to model dependencies without recurrence. " +
+  "This notebook source must be long enough for chunking and embedding in the RAG pipeline.";
+
+describe("source service", { skip: !hasDatabase || !hasOpenAI }, () => {
   let userAId = "";
   let userBId = "";
   let notebookAId = "";
@@ -63,11 +69,11 @@ describe("source service", { skip: !hasDatabase }, () => {
     });
   });
 
-  it("uploads plain text, extracts content, and stores metadata", async () => {
+  it("uploads plain text, extracts, embeds, and marks INDEXED", async () => {
     const source = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
-      file: makeTextFile("Transformer Notes.txt", "Attention is all you need."),
+      file: makeTextFile("Transformer Notes.txt", LONG_NOTE),
     });
 
     assert.equal(source.type, "TEXT");
@@ -78,23 +84,32 @@ describe("source service", { skip: !hasDatabase }, () => {
     assert.ok(source.storagePath);
     assert.notEqual(source.storagePath, "pending");
     assert.match(source.extractedText ?? "", /Attention is all you need/);
-    assert.equal(source.indexingStatus, "PENDING");
+    assert.equal(source.indexingStatus, "INDEXED");
     assert.ok(source.extractedText);
+
+    const chunkCount = await countSourceChunks(source.id);
+    assert.ok(chunkCount > 0);
 
     const listed = await listSourcesForNotebook({
       userId: userAId,
       notebookId: notebookAId,
     });
     assert.equal(
-      listed.some((item) => item.id === source.id && item.hasExtractedText),
+      listed.some(
+        (item) =>
+          item.id === source.id &&
+          item.hasExtractedText &&
+          item.indexingStatus === "INDEXED"
+      ),
       true
     );
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
+    assert.equal(await countSourceChunks(source.id), 0);
   });
 
   it("uploads a text file when browser MIME type is empty", async () => {
-    const file = makeTextFile("notes.txt", "Hello from empty mime");
+    const file = makeTextFile("notes.txt", LONG_NOTE);
     Object.defineProperty(file, "type", { value: "" });
 
     const source = await createSourceFromUpload({
@@ -104,14 +119,14 @@ describe("source service", { skip: !hasDatabase }, () => {
     });
 
     assert.equal(source.mimeType, "text/plain");
-    assert.equal(source.indexingStatus, "PENDING");
-    assert.match(source.extractedText ?? "", /Hello from empty mime/);
+    assert.equal(source.indexingStatus, "INDEXED");
+    assert.match(source.extractedText ?? "", /Attention is all you need/);
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
   });
 
-  it("uploads a PDF and extracts text after storage", async () => {
-    // Minimal PDF with extractable text (Hello).
+  it("uploads a PDF, extracts text, and indexes chunks", async () => {
+    // Minimal PDF with extractable text (Hello World from transformers).
     const pdfBytes = Buffer.from(
       `%PDF-1.1
 1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj
@@ -150,14 +165,9 @@ startxref
     assert.equal(source.mimeType, "application/pdf");
     assert.ok(source.storagePath);
     assert.notEqual(source.storagePath, "pending");
-    assert.equal(source.indexingStatus, "PENDING");
+    assert.equal(source.indexingStatus, "INDEXED");
     assert.ok(source.extractedText);
-
-    // Notebook source upload does not write chat DocumentChunk rows.
-    const chunks = await prisma.documentChunk.count({
-      where: { attachmentId: source.id },
-    });
-    assert.equal(chunks, 0);
+    assert.ok((await countSourceChunks(source.id)) > 0);
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
   });
@@ -178,14 +188,14 @@ startxref
     );
   });
 
-  it("updates status through processing then pending after extract", async () => {
+  it("marks INDEXED after full pipeline", async () => {
     const source = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
-      file: makeTextFile("status.txt", "hello status"),
+      file: makeTextFile("status.txt", LONG_NOTE),
     });
 
-    assert.equal(source.indexingStatus, "PENDING");
+    assert.equal(source.indexingStatus, "INDEXED");
     assert.ok(source.extractedText);
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
@@ -208,7 +218,7 @@ startxref
     const source = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
-      file: makeTextFile("old.txt", "rename me"),
+      file: makeTextFile("old.txt", LONG_NOTE),
     });
 
     const renamed = await renameSourceForUser({
@@ -221,12 +231,14 @@ startxref
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
   });
 
-  it("deletes source metadata and extracted text", async () => {
+  it("deletes source metadata, chunks, and extracted text", async () => {
     const source = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
-      file: makeTextFile("delete-me.txt", "goodbye"),
+      file: makeTextFile("delete-me.txt", LONG_NOTE),
     });
+
+    assert.ok((await countSourceChunks(source.id)) > 0);
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
 
@@ -235,6 +247,7 @@ startxref
       sourceId: source.id,
     });
     assert.equal(gone, null);
+    assert.equal(await countSourceChunks(source.id), 0);
   });
 
   it("enforces notebook ownership", async () => {
@@ -243,7 +256,7 @@ startxref
         createSourceFromUpload({
           userId: userAId,
           notebookId: notebookBId,
-          file: makeTextFile("nope.txt", "secret"),
+          file: makeTextFile("nope.txt", LONG_NOTE),
         }),
       /Notebook not found/
     );
@@ -251,7 +264,7 @@ startxref
     const owned = await createSourceFromUpload({
       userId: userBId,
       notebookId: notebookBId,
-      file: makeTextFile("b-only.txt", "only b"),
+      file: makeTextFile("b-only.txt", LONG_NOTE),
     });
 
     assert.equal(

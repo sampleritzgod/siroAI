@@ -52,7 +52,7 @@ export function RagSearchToolCard({
         <ul className="flex flex-col gap-1.5">
           {result.results.map((item, index) => (
             <li
-              key={`${item.attachmentId}-${item.chunkIndex}-${index}`}
+              key={`${item.sourceId ?? item.attachmentId ?? "doc"}-${item.chunkIndex}-${index}`}
               className="rounded-lg bg-[var(--background)]/60 px-2 py-1.5"
             >
               <div className="flex items-baseline gap-1.5">

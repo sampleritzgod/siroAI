@@ -16,7 +16,7 @@ function jsonError(
 /**
  * POST /api/sources — upload a PDF or plain-text source for a notebook.
  * multipart/form-data: file, notebookId
- * Extracts text; does not create embeddings.
+ * Pipeline: store → extract → chunk → embed → INDEXED.
  */
 export async function POST(req: Request) {
   try {
@@ -112,7 +112,11 @@ export async function POST(req: Request) {
     if (/too large|file is empty/i.test(message)) {
       return jsonError(message, 413);
     }
-    if (/pdf parsing|no extractable text|text extraction failed/i.test(message)) {
+    if (
+      /pdf extraction|pdf parsing|no extractable text|text extraction failed|embeddings missing|zero chunks|chunking produced/i.test(
+        message
+      )
+    ) {
       return jsonError(message, 422);
     }
     if (message === "Storage error") {

@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/db";
 import { chunkText } from "@/modules/rag/chunk";
-import { embedTexts, toVectorLiteral } from "@/modules/rag/embed";
+import {
+  EMBEDDING_DIMENSIONS,
+  embedTexts,
+  toVectorLiteral,
+} from "@/modules/rag/embed";
 import { createId } from "@/modules/rag/ids";
+import { stageLog } from "@/modules/rag/pipeline-log";
 
 /**
  * Index (or re-index) an attachment's extracted text into DocumentChunk rows.
@@ -12,20 +17,88 @@ export async function indexAttachmentForRag(input: {
   conversationId: string;
   extractedText: string | null | undefined;
 }): Promise<{ chunkCount: number; skipped: boolean }> {
+  const chunkStage = stageLog("CHUNK");
+  const embedStage = stageLog("EMBED");
+  const vectorStage = stageLog("VECTOR");
+
   const text = indexableText(input.extractedText);
   if (!text) {
+    chunkStage.started({
+      attachmentId: input.attachmentId,
+      conversationId: input.conversationId,
+    });
     await prisma.$executeRaw`
       DELETE FROM "DocumentChunk" WHERE "attachmentId" = ${input.attachmentId}
     `;
+    chunkStage.completed({
+      attachmentId: input.attachmentId,
+      chunkCount: 0,
+      skipped: true,
+    });
     return { chunkCount: 0, skipped: true };
   }
 
+  chunkStage.started({
+    attachmentId: input.attachmentId,
+    chars: text.length,
+  });
+
   const chunks = chunkText(text);
+  const averageChunkSize =
+    chunks.length === 0
+      ? 0
+      : Math.round(
+          chunks.reduce((sum, chunk) => sum + chunk.content.length, 0) /
+            chunks.length
+        );
+
+  chunkStage.completed({
+    attachmentId: input.attachmentId,
+    chunkCount: chunks.length,
+    averageChunkSize,
+  });
+
   if (chunks.length === 0) {
     return { chunkCount: 0, skipped: true };
   }
 
+  embedStage.started({
+    attachmentId: input.attachmentId,
+    chunkCount: chunks.length,
+  });
+
   const embeddings = await embedTexts(chunks.map((chunk) => chunk.content));
+
+  if (embeddings.length !== chunks.length) {
+    const error = new Error("Embeddings missing for one or more chunks");
+    embedStage.error(error, {
+      attachmentId: input.attachmentId,
+      expected: chunks.length,
+      received: embeddings.length,
+    });
+    throw error;
+  }
+
+  const dimensions = embeddings[0]?.length ?? 0;
+  if (dimensions !== EMBEDDING_DIMENSIONS) {
+    const error = new Error(
+      `Unexpected embedding dimensions: ${dimensions} (expected ${EMBEDDING_DIMENSIONS})`
+    );
+    embedStage.error(error, { attachmentId: input.attachmentId, dimensions });
+    throw error;
+  }
+
+  embedStage.completed({
+    attachmentId: input.attachmentId,
+    chunkCount: embeddings.length,
+    embeddingDimensions: dimensions,
+  });
+
+  vectorStage.started({
+    attachmentId: input.attachmentId,
+    conversationId: input.conversationId,
+    chunkCount: chunks.length,
+  });
 
   await prisma.$executeRaw`
     DELETE FROM "DocumentChunk" WHERE "attachmentId" = ${input.attachmentId}
@@ -34,7 +107,9 @@ export async function indexAttachmentForRag(input: {
   for (let i = 0; i < chunks.length; i += 1) {
     const chunk = chunks[i]!;
     const embedding = embeddings[i];
-    if (!embedding) continue;
+    if (!embedding) {
+      throw new Error(`Embeddings missing at chunk index ${i}`);
+    }
 
     const id = createId();
     const vector = toVectorLiteral(embedding);
@@ -53,6 +128,12 @@ export async function indexAttachmentForRag(input: {
       )
     `;
   }
+
+  vectorStage.completed({
+    attachmentId: input.attachmentId,
+    conversationId: input.conversationId,
+    storedCount: chunks.length,
+  });
 
   return { chunkCount: chunks.length, skipped: false };
 }

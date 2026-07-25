@@ -9,6 +9,8 @@ import {
   deleteStoredUpload,
   storeUpload,
 } from "@/modules/files/storage";
+import { indexSourceForRag } from "@/modules/rag/index-source";
+import { stageLog } from "@/modules/rag/pipeline-log";
 import {
   MAX_UPLOAD_BYTES,
   SOURCE_TITLE_MAX_LENGTH,
@@ -162,16 +164,17 @@ export async function getSourceForUser(input: {
 }
 
 /**
- * Upload + extract a notebook source.
- * Terminal success status is PENDING with extracted text (chat-ready).
- * Does not create embeddings.
+ * Upload → store → extract → chunk → embed → INDEXED.
+ * Chat unlocks only after DocumentChunk vectors exist.
  */
 export async function createSourceFromUpload(input: {
   userId: string;
   notebookId: string;
   file: File;
 }): Promise<SourceRecord> {
-  logger.info("[UPLOAD] start", {
+  const uploadStage = stageLog("UPLOAD");
+
+  uploadStage.started({
     notebookId: input.notebookId,
     filename: input.file.name,
     declaredType: input.file.type,
@@ -187,7 +190,7 @@ export async function createSourceFromUpload(input: {
   });
 
   if (!mediaType) {
-    logger.warn("[UPLOAD] rejected_mime", {
+    uploadStage.error(new Error("Unsupported file type"), {
       filename: originalFileName,
       declaredType: input.file.type,
     });
@@ -197,10 +200,15 @@ export async function createSourceFromUpload(input: {
   }
 
   if (input.file.size <= 0) {
+    uploadStage.error(new Error("File is empty"));
     throw new Error("File is empty.");
   }
 
   if (input.file.size > MAX_UPLOAD_BYTES) {
+    uploadStage.error(new Error("File too large"), {
+      size: input.file.size,
+      max: MAX_UPLOAD_BYTES,
+    });
     throw new Error(
       `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
     );
@@ -210,7 +218,8 @@ export async function createSourceFromUpload(input: {
   const type = sourceTypeFromMediaType(mediaType);
   const title = defaultTitleFromFilename(originalFileName);
 
-  logger.info("[DATABASE] create_pending", {
+  const sourceStage = stageLog("SOURCE");
+  sourceStage.started({
     notebookId: input.notebookId,
     type,
     mimeType: mediaType,
@@ -231,10 +240,13 @@ export async function createSourceFromUpload(input: {
         indexingStatus: "PROCESSING",
       },
     });
-  } catch (error) {
-    logger.error("[DATABASE] create_failed", {
-      error: formatSourceUploadError(error),
+    sourceStage.completed({
+      sourceId: pending.id,
+      notebookId: pending.notebookId,
+      indexingStatus: pending.indexingStatus,
     });
+  } catch (error) {
+    sourceStage.error(error);
     throw new Error("Database error");
   }
 
@@ -242,7 +254,8 @@ export async function createSourceFromUpload(input: {
   let storedRemote = false;
 
   try {
-    logger.info("[STORE] begin", { sourceId: pending.id });
+    const storeStage = stageLog("STORE");
+    storeStage.started({ sourceId: pending.id });
     const stored = await storeUpload({
       attachmentId: pending.id,
       filename: originalFileName,
@@ -251,13 +264,15 @@ export async function createSourceFromUpload(input: {
     });
     storedKey = stored.storageKey;
     storedRemote = stored.storage === "VERCEL_BLOB";
-    logger.info("[STORE] complete", {
+    storeStage.completed({
       sourceId: pending.id,
       storage: stored.storage,
       storageKey: stored.storageKey,
+      notebookId: input.notebookId,
     });
 
-    logger.info("[EXTRACT] begin", {
+    const extractStage = stageLog("EXTRACT");
+    extractStage.started({
       sourceId: pending.id,
       mimeType: mediaType,
     });
@@ -272,50 +287,99 @@ export async function createSourceFromUpload(input: {
       });
       extractedText = extracted.extractedText?.trim() || null;
     } catch (error) {
-      logger.error("[EXTRACT] failed", {
-        sourceId: pending.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      extractStage.error(error, { sourceId: pending.id });
       if (mediaType === "application/pdf") {
-        throw new Error("PDF parsing failed");
+        throw new Error("PDF extraction failed");
       }
       throw new Error("Text extraction failed");
     }
 
     if (!extractedText) {
-      logger.warn("[EXTRACT] empty", { sourceId: pending.id });
-      throw new Error(
+      const error = new Error(
         mediaType === "application/pdf"
-          ? "PDF parsing failed"
+          ? "PDF extraction failed"
           : "No extractable text found in this file."
+      );
+      extractStage.error(error, { sourceId: pending.id });
+      throw error;
+    }
+
+    if (extractedText.startsWith("SIRO_PDF_VISION:")) {
+      const newline = extractedText.indexOf("\n");
+      const remainder =
+        newline === -1 ? "" : extractedText.slice(newline).trim();
+      if (!remainder) {
+        const error = new Error(
+          "PDF extraction failed: no embeddable text (image-only PDF)."
+        );
+        extractStage.error(error, { sourceId: pending.id });
+        throw error;
+      }
+      extractedText = remainder;
+    }
+
+    extractStage.completed({
+      sourceId: pending.id,
+      chars: extractedText.length,
+      encoding: "utf8",
+    });
+
+    await prisma.source.update({
+      where: { id: pending.id },
+      data: {
+        storagePath: stored.storageKey,
+        extractedText,
+        indexingStatus: "PROCESSING",
+      },
+    });
+
+    let indexed;
+    try {
+      indexed = await indexSourceForRag({
+        sourceId: pending.id,
+        notebookId: input.notebookId,
+        extractedText,
+      });
+    } catch (error) {
+      throw new Error(
+        error instanceof Error && /OPENAI_API_KEY/i.test(error.message)
+          ? "Embeddings missing: OPENAI_API_KEY is not configured"
+          : error instanceof Error
+            ? error.message
+            : "Embeddings missing"
       );
     }
 
-    logger.info("[EXTRACT] complete", {
-      sourceId: pending.id,
-      chars: extractedText.length,
-    });
+    if (indexed.skipped || indexed.chunkCount === 0) {
+      throw new Error(
+        indexed.reason === "no_indexable_text"
+          ? "No extractable text found for embeddings"
+          : "Chunking produced zero chunks"
+      );
+    }
 
-    // Upload pipeline complete. PENDING + extracted text unlocks chat.
-    // Embeddings / INDEXED are intentionally deferred.
     const saved = await prisma.source.update({
       where: { id: pending.id },
       data: {
         storagePath: stored.storageKey,
         extractedText,
-        indexingStatus: "PENDING",
+        indexingStatus: "INDEXED",
       },
     });
 
-    logger.info("[UPLOAD] complete", {
+    uploadStage.completed({
       sourceId: saved.id,
       notebookId: saved.notebookId,
       indexingStatus: saved.indexingStatus,
+      chunkCount: indexed.chunkCount,
+      averageChunkSize: indexed.averageChunkSize,
+      embeddingDimensions: indexed.embeddingDimensions,
       hasExtractedText: true,
     });
 
     return saved;
   } catch (error) {
+    uploadStage.error(error, { sourceId: pending.id });
     logger.error("[UPLOAD] failed", {
       sourceId: pending.id,
       error: formatSourceUploadError(error),
@@ -341,6 +405,9 @@ export async function createSourceFromUpload(input: {
     }
 
     try {
+      await prisma.$executeRaw`
+        DELETE FROM "DocumentChunk" WHERE "sourceId" = ${pending.id}
+      `;
       await prisma.source.update({
         where: { id: pending.id },
         data: {
@@ -383,14 +450,17 @@ export async function renameSourceForUser(input: {
 }
 
 /**
- * Deletes source metadata, extracted text, and the stored file.
- * Does not touch embeddings (none exist for sources yet).
+ * Deletes source metadata, extracted text, DocumentChunks, and the stored file.
  */
 export async function deleteSourceForUser(input: {
   userId: string;
   sourceId: string;
 }): Promise<void> {
   const source = await assertSourceOwner(input.sourceId, input.userId);
+
+  await prisma.$executeRaw`
+    DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}
+  `;
 
   if (source.storagePath && source.storagePath !== "pending") {
     await deleteStoredUpload({
@@ -404,5 +474,10 @@ export async function deleteSourceForUser(input: {
 
   await prisma.source.delete({
     where: { id: source.id },
+  });
+
+  logger.info("[SOURCE] deleted", {
+    sourceId: source.id,
+    notebookId: source.notebookId,
   });
 }
