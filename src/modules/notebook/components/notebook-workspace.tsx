@@ -25,7 +25,6 @@ type NotebookWorkspaceProps = {
   sources: SourceListItem[];
   conversations: ConversationListItem[];
   onSelectNotebook: (notebookId: string) => void;
-  onRequestCreateNotebook: () => void;
   onNotebookDeleted: (notebookId: string) => void;
   children: React.ReactNode;
 };
@@ -36,7 +35,6 @@ export function NotebookWorkspace({
   sources,
   conversations,
   onSelectNotebook,
-  onRequestCreateNotebook,
   onNotebookDeleted,
   children,
 }: NotebookWorkspaceProps) {
@@ -147,8 +145,8 @@ export function NotebookWorkspace({
       notebook={notebook}
       notebooks={notebooks}
       sources={sources}
+      conversations={conversations}
       onSelectNotebook={onSelectNotebook}
-      onRequestCreateNotebook={onRequestCreateNotebook}
       onNotebookDeleted={onNotebookDeleted}
     />
   );

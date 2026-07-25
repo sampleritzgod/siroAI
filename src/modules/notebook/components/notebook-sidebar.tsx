@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  useTransition,
 } from "react";
 import type { ConversationListItem } from "@/modules/conversation/actions/conversation-actions";
 import {
@@ -15,7 +16,7 @@ import {
   subscribeActiveNotebook,
   writeActiveNotebookId,
 } from "@/modules/notebook/active-notebook";
-import { CreateNotebookDialog } from "@/modules/notebook/components/create-notebook-dialog";
+import { createNotebookQuick } from "@/modules/notebook/actions/notebook-actions";
 import { NotebookEmptyState } from "@/modules/notebook/components/notebook-empty-state";
 import { NotebookWorkspace } from "@/modules/notebook/components/notebook-workspace";
 import type { NotebookListItem } from "@/modules/notebook/service";
@@ -40,7 +41,8 @@ export function NotebookAppShell({
 }: NotebookShellProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [createOpen, setCreateOpen] = useState(false);
+  const [, startTransition] = useTransition();
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const storedNotebookId = useSyncExternalStore(
     subscribeActiveNotebook,
@@ -94,9 +96,9 @@ export function NotebookAppShell({
 
   function selectNotebook(notebookId: string) {
     writeActiveNotebookId(notebookId);
-    if (pathname.startsWith("/c/")) {
-      router.push("/");
-    }
+    // Always return to notebook home so the workspace resumes that notebook's chat.
+    router.push("/");
+    router.refresh();
   }
 
   function handleNotebookDeleted(deletedId: string) {
@@ -113,36 +115,44 @@ export function NotebookAppShell({
     router.refresh();
   }
 
-  return (
-    <>
-      <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {showEmptyLibrary ? (
-          <NotebookEmptyState onCreate={() => setCreateOpen(true)} />
-        ) : activeNotebook && isWorkspaceRoute ? (
-          <NotebookWorkspace
-            notebook={activeNotebook}
-            notebooks={notebooks}
-            sources={scopedSources}
-            conversations={scopedConversations}
-            onSelectNotebook={selectNotebook}
-            onRequestCreateNotebook={() => setCreateOpen(true)}
-            onNotebookDeleted={handleNotebookDeleted}
-          >
-            {children}
-          </NotebookWorkspace>
-        ) : (
-          children
-        )}
-      </main>
-
-      <CreateNotebookDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={(notebookId) => {
-          writeActiveNotebookId(notebookId);
+  function createFirstNotebook() {
+    setCreateError(null);
+    startTransition(() => {
+      void createNotebookQuick()
+        .then((created) => {
+          writeActiveNotebookId(created.id);
+          router.push("/");
           router.refresh();
-        }}
-      />
-    </>
+        })
+        .catch((error) => {
+          setCreateError(
+            error instanceof Error ? error.message : "Could not create notebook"
+          );
+        });
+    });
+  }
+
+  return (
+    <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {showEmptyLibrary ? (
+        <NotebookEmptyState
+          onCreate={createFirstNotebook}
+          error={createError}
+        />
+      ) : activeNotebook && isWorkspaceRoute ? (
+        <NotebookWorkspace
+          notebook={activeNotebook}
+          notebooks={notebooks}
+          sources={scopedSources}
+          conversations={scopedConversations}
+          onSelectNotebook={selectNotebook}
+          onNotebookDeleted={handleNotebookDeleted}
+        >
+          {children}
+        </NotebookWorkspace>
+      ) : (
+        children
+      )}
+    </main>
   );
 }

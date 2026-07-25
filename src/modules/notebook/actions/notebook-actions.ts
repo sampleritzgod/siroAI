@@ -12,23 +12,39 @@ import {
   type NotebookListItem,
   type NotebookRecord,
 } from "@/modules/notebook/service";
+import { suggestNextNotebookTitle } from "@/modules/notebook/suggest-title";
 
 /**
  * Creates a notebook for the signed-in user.
+ * When title is omitted/blank, assigns an auto-generated name.
  */
-export async function createNotebook(input: {
-  title: string;
+export async function createNotebook(input?: {
+  title?: string;
   description?: string | null;
 }): Promise<NotebookRecord> {
   const user = await requireUser();
+  const existing = await getUserNotebooksForUser(user.id);
+  const requested = input?.title?.trim() ?? "";
+  const title =
+    requested.length > 0
+      ? requested
+      : suggestNextNotebookTitle(existing.map((item) => item.title));
+
   const notebook = await createNotebookForUser({
     userId: user.id,
-    title: input.title,
-    description: input.description,
+    title,
+    description: input?.description,
   });
 
   revalidatePath("/");
   return notebook;
+}
+
+/**
+ * One-click notebook create with an auto-generated title.
+ */
+export async function createNotebookQuick(): Promise<NotebookRecord> {
+  return createNotebook();
 }
 
 /**
