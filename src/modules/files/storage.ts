@@ -5,8 +5,16 @@ import type { AttachmentStorage } from "@/generated/prisma/client";
 
 const LOCAL_ROOT = path.join(process.cwd(), ".data", "uploads");
 
+/**
+ * Blob is available when either:
+ * - BLOB_READ_WRITE_TOKEN (static token / local + client uploads), or
+ * - BLOB_STORE_ID (OIDC on Vercel — preferred for Production)
+ */
 export function isVercelBlobConfigured() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(
+    process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
+      process.env.BLOB_STORE_ID?.trim()
+  );
 }
 
 export function getLocalAttachmentDir(attachmentId: string) {
@@ -28,6 +36,12 @@ function isVercelRuntime() {
   return process.env.VERCEL === "1";
 }
 
+function blobAuthOptions(): { token?: string } {
+  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  // Only pass token when set. On Vercel, omitting it lets the SDK use OIDC + BLOB_STORE_ID.
+  return token ? { token } : {};
+}
+
 /**
  * Persist bytes to Vercel Blob when configured, otherwise local .data/uploads.
  * On Vercel, Blob is required — local disk is ephemeral and must not be used.
@@ -38,32 +52,42 @@ export async function storeUpload(input: {
   mediaType: string;
   bytes: Buffer;
 }): Promise<StoredObject> {
-  if (isVercelBlobConfigured()) {
-    const blob = await put(
-      `attachments/${input.attachmentId}/${input.filename}`,
-      input.bytes,
-      {
-        access: "public",
-        contentType: input.mediaType,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      }
-    );
+  const safeName = sanitizeFilename(input.filename);
 
-    return {
-      storage: "VERCEL_BLOB",
-      storageKey: blob.url,
-      url: blob.url,
-    };
+  if (isVercelBlobConfigured()) {
+    try {
+      const blob = await put(
+        `attachments/${input.attachmentId}/${safeName}`,
+        input.bytes,
+        {
+          access: "public",
+          contentType: input.mediaType,
+          ...blobAuthOptions(),
+        }
+      );
+
+      return {
+        storage: "VERCEL_BLOB",
+        storageKey: blob.url,
+        url: blob.url,
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown blob error";
+      throw new Error(
+        `Storage error: ${message}. Check Blob store connection (BLOB_STORE_ID / BLOB_READ_WRITE_TOKEN).`
+      );
+    }
   }
 
   if (isVercelRuntime()) {
     throw new Error(
-      "BLOB_READ_WRITE_TOKEN is required for uploads on Vercel. Local disk storage is not available in serverless."
+      "Storage error: Blob is not configured on this deployment. Connect a Vercel Blob store to the project (adds BLOB_STORE_ID) or set BLOB_READ_WRITE_TOKEN."
     );
   }
 
   await mkdir(LOCAL_ROOT, { recursive: true });
-  const relativeKey = `${input.attachmentId}/${sanitizeFilename(input.filename)}`;
+  const relativeKey = `${input.attachmentId}/${safeName}`;
   const absolute = path.join(LOCAL_ROOT, relativeKey);
   await mkdir(path.dirname(absolute), { recursive: true });
   await writeFile(absolute, input.bytes);
@@ -97,7 +121,7 @@ export async function deleteStoredUpload(input: {
     if (!isVercelBlobConfigured()) return;
     try {
       await del(input.storageKey, {
-        token: process.env.BLOB_READ_WRITE_TOKEN,
+        ...blobAuthOptions(),
       });
     } catch {
       // Blob may already be gone; continue.

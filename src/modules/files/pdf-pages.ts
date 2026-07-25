@@ -96,13 +96,15 @@ async function persistPageImage(input: {
   png: Buffer;
 }): Promise<string | null> {
   if (isVercelBlobConfigured()) {
+    const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
     const blob = await put(
       `attachments/${input.attachmentId}/pages/${input.pageNumber}.png`,
       input.png,
       {
         access: "public",
         contentType: "image/png",
-        token: process.env.BLOB_READ_WRITE_TOKEN,
+        // Omit token on Vercel so the SDK can authenticate via OIDC + BLOB_STORE_ID.
+        ...(token ? { token } : {}),
       }
     );
     return blob.url;
