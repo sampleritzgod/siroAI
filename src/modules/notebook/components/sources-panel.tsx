@@ -94,7 +94,7 @@ export function SourcesPanel({
     const needle = query.trim().toLowerCase();
     if (!needle) return sources;
     return sources.filter((source) =>
-      [source.title, source.originalFileName, source.type]
+      [source.title, source.originalFileName, source.type, source.url ?? ""]
         .join(" ")
         .toLowerCase()
         .includes(needle)
@@ -297,7 +297,11 @@ export function SourcesPanel({
                       >
                         <p className="truncate text-sm text-[var(--foreground)]">
                           <span aria-hidden="true">
-                            {source.type === "PDF" ? "📄 " : "📝 "}
+                            {source.type === "PDF"
+                              ? "📄 "
+                              : source.type === "WEBSITE"
+                                ? "🔗 "
+                                : "📝 "}
                           </span>
                           {source.title}
                         </p>

@@ -14,12 +14,18 @@ import { stageLog } from "@/modules/rag/pipeline-log";
 import {
   MAX_UPLOAD_BYTES,
   SOURCE_TITLE_MAX_LENGTH,
+  WEBSITE_STORAGE_PATH,
   defaultTitleFromFilename,
   formatSourceUploadError,
   isRemoteStoragePath,
   resolveSourceMediaType,
   sourceTypeFromMediaType,
 } from "@/modules/source/constants";
+import {
+  defaultTitleFromWebsite,
+  fetchWebsiteContent,
+  normalizeWebsiteUrl,
+} from "@/modules/source/fetch-website";
 
 export type SourceRecord = {
   id: string;
@@ -30,6 +36,7 @@ export type SourceRecord = {
   mimeType: string;
   fileSize: number;
   storagePath: string;
+  url: string | null;
   extractedText: string | null;
   indexingStatus: SourceIndexingStatus;
   createdAt: Date;
@@ -44,6 +51,7 @@ export type SourceListItem = {
   originalFileName: string;
   mimeType: string;
   fileSize: number;
+  url: string | null;
   indexingStatus: SourceIndexingStatus;
   hasExtractedText: boolean;
   createdAt: Date;
@@ -110,6 +118,7 @@ function toSourceListItem(row: {
   originalFileName: string;
   mimeType: string;
   fileSize: number;
+  url: string | null;
   indexingStatus: SourceIndexingStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -123,6 +132,7 @@ function toSourceListItem(row: {
     originalFileName: row.originalFileName,
     mimeType: row.mimeType,
     fileSize: row.fileSize,
+    url: row.url,
     indexingStatus: row.indexingStatus,
     hasExtractedText: row.hasExtractedText,
     createdAt: row.createdAt,
@@ -146,6 +156,7 @@ export async function listSourcesForNotebook(input: {
       originalFileName: string;
       mimeType: string;
       fileSize: number;
+      url: string | null;
       indexingStatus: SourceIndexingStatus;
       createdAt: Date;
       updatedAt: Date;
@@ -160,6 +171,7 @@ export async function listSourcesForNotebook(input: {
       "originalFileName",
       "mimeType",
       "fileSize",
+      url,
       "indexingStatus",
       "createdAt",
       "updatedAt",
@@ -187,6 +199,7 @@ export async function listSourcesForUser(userId: string): Promise<SourceListItem
       originalFileName: string;
       mimeType: string;
       fileSize: number;
+      url: string | null;
       indexingStatus: SourceIndexingStatus;
       createdAt: Date;
       updatedAt: Date;
@@ -201,6 +214,7 @@ export async function listSourcesForUser(userId: string): Promise<SourceListItem
       s."originalFileName",
       s."mimeType",
       s."fileSize",
+      s.url,
       s."indexingStatus",
       s."createdAt",
       s."updatedAt",
@@ -463,6 +477,107 @@ export async function createSourceFromUpload(input: {
 }
 
 /**
+ * Fetch a website URL → extract readable text → PROCESSING.
+ * Reuses finalizeSourceIndexing for chunk → embed → INDEXED.
+ */
+export async function createSourceFromWebsite(input: {
+  userId: string;
+  notebookId: string;
+  url: string;
+}): Promise<SourceRecord> {
+  await assertNotebookOwner(input.notebookId, input.userId);
+
+  const uploadStage = stageLog("UPLOAD");
+  uploadStage.started({
+    notebookId: input.notebookId,
+    kind: "website",
+    url: input.url,
+  });
+
+  let normalizedUrl: string;
+  try {
+    normalizedUrl = normalizeWebsiteUrl(input.url);
+  } catch (error) {
+    uploadStage.error(error);
+    throw error instanceof Error ? error : new Error("Invalid URL");
+  }
+
+  const duplicate = await prisma.source.findFirst({
+    where: {
+      notebookId: input.notebookId,
+      type: "WEBSITE",
+      url: normalizedUrl,
+    },
+    select: { id: true },
+  });
+
+  if (duplicate) {
+    const error = new Error("This website is already added to the notebook.");
+    uploadStage.error(error);
+    throw error;
+  }
+
+  let page;
+  try {
+    page = await fetchWebsiteContent(normalizedUrl);
+  } catch (error) {
+    uploadStage.error(error);
+    throw error instanceof Error
+      ? error
+      : new Error(formatSourceUploadError(error));
+  }
+
+  const title = defaultTitleFromWebsite({
+    pageTitle: page.title,
+    url: page.url,
+  });
+  let hostname = "website";
+  try {
+    hostname = new URL(page.url).hostname.replace(/^www\./, "") || "website";
+  } catch {
+    // keep default
+  }
+
+  try {
+    const saved = await prisma.source.create({
+      data: {
+        notebookId: input.notebookId,
+        type: "WEBSITE",
+        title,
+        originalFileName: hostname,
+        mimeType: "text/html",
+        fileSize: page.htmlBytes,
+        storagePath: WEBSITE_STORAGE_PATH,
+        url: page.url,
+        extractedText: page.text,
+        indexingStatus: "PROCESSING",
+      },
+    });
+
+    uploadStage.completed({
+      sourceId: saved.id,
+      notebookId: saved.notebookId,
+      indexingStatus: saved.indexingStatus,
+      hasExtractedText: true,
+      indexing: "queued",
+      url: saved.url,
+      chars: page.text.length,
+    });
+
+    return saved;
+  } catch (error) {
+    uploadStage.error(error);
+    if (
+      error instanceof Error &&
+      /unique|duplicate/i.test(error.message)
+    ) {
+      throw new Error("This website is already added to the notebook.");
+    }
+    throw new Error("Database error");
+  }
+}
+
+/**
  * Chunk → embed → persist vectors → INDEXED (or FAILED).
  * Intended to run after upload returns (e.g. Next.js after()).
  */
@@ -560,6 +675,19 @@ export async function createIndexedSourceFromUpload(input: {
   });
 }
 
+/** Test helper: website fetch + finish indexing in one call. */
+export async function createIndexedSourceFromWebsite(input: {
+  userId: string;
+  notebookId: string;
+  url: string;
+}): Promise<SourceRecord> {
+  const created = await createSourceFromWebsite(input);
+  return finalizeSourceIndexing({
+    sourceId: created.id,
+    notebookId: created.notebookId,
+  });
+}
+
 export async function renameSourceForUser(input: {
   userId: string;
   sourceId: string;
@@ -596,7 +724,12 @@ export async function deleteSourceForUser(input: {
     DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}
   `;
 
-  if (source.storagePath && source.storagePath !== "pending") {
+  if (
+    source.type !== "WEBSITE" &&
+    source.storagePath &&
+    source.storagePath !== "pending" &&
+    source.storagePath !== WEBSITE_STORAGE_PATH
+  ) {
     await deleteStoredUpload({
       objectId: source.id,
       storage: isRemoteStoragePath(source.storagePath)

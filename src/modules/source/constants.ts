@@ -2,7 +2,7 @@ import { MAX_UPLOAD_BYTES } from "@/modules/files/constants";
 
 export { MAX_UPLOAD_BYTES };
 
-/** Source library allows PDF and plain text only. */
+/** Source library allows PDF and plain text only (website uses URL path). */
 export const SOURCE_ALLOWED_MEDIA_TYPES = [
   "application/pdf",
   "text/plain",
@@ -12,6 +12,9 @@ export type SourceAllowedMediaType =
   (typeof SOURCE_ALLOWED_MEDIA_TYPES)[number];
 
 export const SOURCE_TITLE_MAX_LENGTH = 100;
+
+/** Sentinel storagePath for website sources (not a blob/local file key). */
+export const WEBSITE_STORAGE_PATH = "website";
 
 export function isSourceAllowedMediaType(
   value: string
@@ -67,6 +70,29 @@ export function formatSourceUploadError(error: unknown): string {
   if (/notebook not found/i.test(message)) {
     return "Notebook not found";
   }
+  if (/already added|duplicate website/i.test(message)) {
+    return "This website is already added to the notebook.";
+  }
+  if (/invalid url/i.test(message)) {
+    return message.includes("http")
+      ? message
+      : "Invalid URL. Only http and https are supported.";
+  }
+  if (/website fetch timed out|timed out/i.test(message)) {
+    return "Website fetch timed out";
+  }
+  if (/website unreachable|host is not allowed/i.test(message)) {
+    return /HTTP \d+/.test(message) ? message : "Website unreachable";
+  }
+  if (/empty website content/i.test(message)) {
+    return "Empty website content";
+  }
+  if (/unsupported content type/i.test(message)) {
+    return message;
+  }
+  if (/website content is too large/i.test(message)) {
+    return "Website content is too large";
+  }
   if (/unsupported file type/i.test(message)) {
     return "Unsupported file type. Only PDF and plain text are allowed.";
   }
@@ -96,9 +122,7 @@ export function formatSourceUploadError(error: unknown): string {
       message
     )
   ) {
-    return message.startsWith("Storage error")
-      ? message
-      : "Storage error";
+    return message.startsWith("Storage error") ? message : "Storage error";
   }
   if (/prisma|database|P\d{4}/i.test(message)) {
     return "Database error";

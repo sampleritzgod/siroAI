@@ -18,6 +18,7 @@ function source(
     originalFileName: "doc.txt",
     mimeType: "text/plain",
     fileSize: 10,
+    url: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,

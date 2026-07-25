@@ -15,6 +15,12 @@ const UPLOAD_STEPS = [
   "Queuing indexing…",
 ] as const;
 
+const WEBSITE_STEPS = [
+  "Fetching page…",
+  "Extracting readable text…",
+  "Queuing indexing…",
+] as const;
+
 type AddSourceDialogProps = {
   open: boolean;
   notebookId: string | null;
@@ -52,11 +58,17 @@ function AddSourceDialogForm({
   const titleId = useId();
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<"menu" | "website">("menu");
+  const [websiteUrl, setWebsiteUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [progressKind, setProgressKind] = useState<"file" | "website">("file");
+
+  const progressSteps =
+    progressKind === "website" ? WEBSITE_STEPS : UPLOAD_STEPS;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -77,11 +89,11 @@ function AddSourceDialogForm({
     }
 
     setStepIndex(0);
-    const stepTimers = [
-      window.setTimeout(() => setStepIndex(1), 400),
-      window.setTimeout(() => setStepIndex(2), 900),
-      window.setTimeout(() => setStepIndex(3), 1600),
-    ];
+    const delays =
+      progressKind === "website" ? [500, 1200] : [400, 900, 1600];
+    const stepTimers = delays.map((delay, index) =>
+      window.setTimeout(() => setStepIndex(index + 1), delay)
+    );
     const tick = window.setInterval(() => {
       setElapsedSec((value) => value + 1);
     }, 1000);
@@ -90,7 +102,7 @@ function AddSourceDialogForm({
       for (const timer of stepTimers) window.clearTimeout(timer);
       window.clearInterval(tick);
     };
-  }, [isUploading]);
+  }, [isUploading, progressKind]);
 
   function validateFile(file: File): string | null {
     if (!file.size) {
@@ -124,7 +136,8 @@ function AddSourceDialogForm({
     }
 
     setError(null);
-    setFileName(file.name);
+    setProgressKind("file");
+    setActiveLabel(file.name);
     setIsUploading(true);
 
     try {
@@ -137,40 +150,80 @@ function AddSourceDialogForm({
         body: form,
       });
 
-      const payload = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          setError("Unauthorized");
-          return;
-        }
-        if (response.status === 404) {
-          setError(payload?.error || "Notebook not found");
-          return;
-        }
-        setError(
-          payload?.error ||
-            (response.status === 413
-              ? `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
-              : response.status === 415
-                ? "Unsupported file type. Only PDF and plain text are allowed."
-                : response.status === 422
-                  ? "PDF extraction failed"
-                  : "Unexpected server error")
-        );
-        return;
-      }
-
-      onUploaded();
-      onClose();
+      await handleSourceResponse(response);
     } catch {
       setError("Network error during upload");
     } finally {
       setIsUploading(false);
-      setFileName(null);
+      setActiveLabel(null);
     }
+  }
+
+  async function submitWebsite() {
+    if (isUploading) return;
+
+    const url = websiteUrl.trim();
+    if (!url) {
+      setError("Invalid URL");
+      return;
+    }
+    if (!notebookId.trim()) {
+      setError("Notebook not found");
+      return;
+    }
+
+    setError(null);
+    setProgressKind("website");
+    setActiveLabel(url);
+    setIsUploading(true);
+
+    try {
+      const response = await fetch("/api/sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notebookId, url }),
+      });
+
+      await handleSourceResponse(response);
+    } catch {
+      setError("Network error while fetching website");
+    } finally {
+      setIsUploading(false);
+      setActiveLabel(null);
+    }
+  }
+
+  async function handleSourceResponse(response: Response) {
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        setError("Unauthorized");
+        return;
+      }
+      if (response.status === 404) {
+        setError(payload?.error || "Notebook not found");
+        return;
+      }
+      setError(
+        payload?.error ||
+          (response.status === 413
+            ? `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+            : response.status === 415
+              ? "Unsupported file type. Only PDF and plain text are allowed."
+              : response.status === 409
+                ? "This website is already added to the notebook."
+                : response.status === 422
+                  ? "Could not extract content from this source"
+                  : "Unexpected server error")
+      );
+      return;
+    }
+
+    onUploaded();
+    onClose();
   }
 
   return (
@@ -191,14 +244,22 @@ function AddSourceDialogForm({
         className="relative z-[61] w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl"
       >
         <h2 id={titleId} className="text-lg font-semibold tracking-tight">
-          {isUploading ? "Uploading source" : "Add Source"}
+          {isUploading
+            ? progressKind === "website"
+              ? "Adding website"
+              : "Uploading source"
+            : mode === "website"
+              ? "Add Website"
+              : "Add Source"}
         </h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
           {isUploading
-            ? fileName
-              ? `Working on “${fileName}”…`
-              : "Please wait while we upload your file."
-            : "Upload a PDF or plain text file to this notebook."}
+            ? activeLabel
+              ? `Working on “${activeLabel}”…`
+              : "Please wait…"
+            : mode === "website"
+              ? "Paste a public page URL. Readable text will be indexed for chat."
+              : "Upload a PDF or text file, or add a website URL."}
         </p>
 
         {isUploading ? (
@@ -210,18 +271,22 @@ function AddSourceDialogForm({
               />
               <div className="min-w-0 text-left">
                 <p className="truncate text-sm font-medium text-[var(--foreground)]">
-                  {UPLOAD_STEPS[Math.min(stepIndex, UPLOAD_STEPS.length - 1)]}
+                  {
+                    progressSteps[
+                      Math.min(stepIndex, progressSteps.length - 1)
+                    ]
+                  }
                 </p>
                 <p className="text-xs text-[var(--muted)]">
                   {elapsedSec < 1
                     ? "Starting…"
-                    : `${elapsedSec}s elapsed · usually under 10s`}
+                    : `${elapsedSec}s elapsed · usually under 15s`}
                 </p>
               </div>
             </div>
 
             <ol className="space-y-2">
-              {UPLOAD_STEPS.map((step, index) => {
+              {progressSteps.map((step, index) => {
                 const done = index < stepIndex;
                 const active = index === stepIndex;
                 return (
@@ -253,6 +318,43 @@ function AddSourceDialogForm({
               })}
             </ol>
           </div>
+        ) : mode === "website" ? (
+          <form
+            className="mt-4 flex flex-col gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitWebsite();
+            }}
+          >
+            <label className="text-xs font-medium text-[var(--muted)]">
+              Website URL
+              <input
+                type="url"
+                inputMode="url"
+                autoFocus
+                placeholder="https://example.com/article"
+                value={websiteUrl}
+                onChange={(event) => setWebsiteUrl(event.target.value)}
+                className="mt-1.5 w-full rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-2.5 text-sm text-[var(--foreground)] outline-none ring-[var(--accent)] focus:ring-2"
+              />
+            </label>
+            <button
+              type="submit"
+              className="rounded-xl bg-[var(--accent)] px-3 py-2.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Add Website
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("menu");
+                setError(null);
+              }}
+              className="text-left text-xs text-[var(--muted)] hover:text-[var(--foreground)]"
+            >
+              ← Back to source types
+            </button>
+          </form>
         ) : (
           <div className="mt-4 flex flex-col gap-2">
             <input
@@ -290,9 +392,20 @@ function AddSourceDialogForm({
             >
               Upload Text File
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("website");
+                setError(null);
+              }}
+              className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
+            >
+              Add Website
+            </button>
 
             <p className="text-[11px] text-[var(--muted)]">
-              Allowed: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")}
+              Files: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")} · Websites: public
+              http(s) pages
             </p>
           </div>
         )}
@@ -310,7 +423,7 @@ function AddSourceDialogForm({
             disabled={isUploading}
             className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--sidebar)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isUploading ? "Uploading…" : "Cancel"}
+            {isUploading ? "Working…" : "Cancel"}
           </button>
         </div>
       </div>

@@ -31,7 +31,11 @@ export function SourceMetadataDialog({
   const rows: { label: string; value: string }[] = [
     { label: "Title", value: source.title },
     { label: "Type", value: source.type },
-    { label: "File name", value: source.originalFileName },
+    {
+      label: source.type === "WEBSITE" ? "Host" : "File name",
+      value: source.originalFileName,
+    },
+    ...(source.url ? [{ label: "URL", value: source.url }] : []),
     { label: "MIME type", value: source.mimeType },
     { label: "Size", value: formatBytes(source.fileSize) },
     { label: "Status", value: formatIndexingStatus(source.indexingStatus) },
