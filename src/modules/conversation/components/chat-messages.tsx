@@ -8,6 +8,7 @@ import {
 } from "ai";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { MarkdownContent } from "@/modules/conversation/components/markdown-content";
 import { RagSearchToolCard } from "@/modules/conversation/components/rag-search-tool-card";
 import { ThinkingIndicator } from "@/modules/conversation/components/thinking-indicator";
 import { WebSearchToolCard } from "@/modules/conversation/components/web-search-tool-card";
@@ -182,13 +183,23 @@ export function ChatMessages({
             ) : canShowBubble ? (
               <div
                 className={cn(
-                  "max-w-[92%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[15px] leading-relaxed sm:max-w-[85%] sm:px-4 sm:py-3",
+                  "max-w-[92%] rounded-2xl px-3.5 py-2.5 text-[15px] leading-relaxed sm:max-w-[85%] sm:px-4 sm:py-3",
                   isUser
-                    ? "bg-[var(--accent)] text-white"
+                    ? "whitespace-pre-wrap bg-[var(--accent)] text-white"
                     : "bg-[var(--surface)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
                 )}
               >
-                {text || (isThinking ? "" : "…")}
+                {text ? (
+                  isUser ? (
+                    text
+                  ) : (
+                    <MarkdownContent content={text} />
+                  )
+                ) : isThinking ? (
+                  ""
+                ) : (
+                  "…"
+                )}
               </div>
             ) : null}
 
