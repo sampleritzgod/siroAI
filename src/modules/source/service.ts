@@ -160,7 +160,7 @@ export async function getSourceForUser(input: {
 }
 
 /**
- * Upload + extract a notebook source. Does not create embeddings / RAG index.
+ * Upload + extract a notebook source, then mark it INDEXED when text is ready.
  */
 export async function createSourceFromUpload(input: {
   userId: string;
@@ -213,13 +213,25 @@ export async function createSourceFromUpload(input: {
       bytes,
     });
 
-    // Text is stored for the future indexing phase — status stays PENDING (not INDEXED).
+    const extractedText = extracted.extractedText?.trim() ?? "";
+    if (!extractedText) {
+      return prisma.source.update({
+        where: { id: pending.id },
+        data: {
+          storagePath: stored.storageKey,
+          extractedText: null,
+          indexingStatus: "FAILED",
+        },
+      });
+    }
+
+    // Source is ready for notebook chat once text is extracted and stored.
     return prisma.source.update({
       where: { id: pending.id },
       data: {
         storagePath: stored.storageKey,
-        extractedText: extracted.extractedText,
-        indexingStatus: "PENDING",
+        extractedText,
+        indexingStatus: "INDEXED",
       },
     });
   } catch (error) {

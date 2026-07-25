@@ -18,6 +18,22 @@ import { createNotebookForUser } from "@/modules/notebook/service";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
 
+async function seedReadySource(notebookId: string) {
+  await prisma.source.create({
+    data: {
+      notebookId,
+      type: "TEXT",
+      title: "Seed",
+      originalFileName: "seed.txt",
+      mimeType: "text/plain",
+      fileSize: 4,
+      storagePath: `test/${notebookId}/seed.txt`,
+      extractedText: "seed content",
+      indexingStatus: "INDEXED",
+    },
+  });
+}
+
 describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
   let userAId = "";
   let userBId = "";
@@ -55,6 +71,7 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
         userId: userAId,
         title: "Research",
       });
+      await seedReadySource(notebook.id);
 
       const conversation = await createConversationForUser({
         userId: userAId,
@@ -71,7 +88,26 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
       assert.ok(branch);
     });
 
+    it("rejects chat when the notebook has no indexed sources", async () => {
+      const notebook = await createNotebookForUser({
+        userId: userAId,
+        title: "Empty Knowledge",
+      });
+
+      await assert.rejects(
+        () =>
+          createConversationForUser({
+            userId: userAId,
+            notebookId: notebook.id,
+          }),
+        /index at least one source/
+      );
+    });
+
     it("falls back to the default notebook when notebookId is omitted", async () => {
+      const defaultNotebook = await getOrCreateDefaultNotebookForUser(userAId);
+      await seedReadySource(defaultNotebook.id);
+
       const conversation = await createConversationForUser({
         userId: userAId,
       });
@@ -88,6 +124,7 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
       const first = await getOrCreateDefaultNotebookForUser(userAId);
       const second = await getOrCreateDefaultNotebookForUser(userAId);
       assert.equal(first.id, second.id);
+      await seedReadySource(first.id);
 
       const conversation = await createConversationForUser({
         userId: userAId,
@@ -102,6 +139,7 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
         userId: userBId,
         title: "B Private",
       });
+      await seedReadySource(notebookB.id);
 
       await assert.rejects(
         () =>
@@ -118,6 +156,7 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
         userId: userBId,
         title: "B Notes",
       });
+      await seedReadySource(notebookB.id);
       const conversationB = await createConversationForUser({
         userId: userBId,
         notebookId: notebookB.id,
@@ -163,6 +202,7 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
   describe("migration helpers and legacy behavior", () => {
     it("backfills unassigned conversations onto the default notebook", async () => {
       const notebook = await getOrCreateDefaultNotebookForUser(userAId);
+      await seedReadySource(notebook.id);
 
       // Simulate a pre-constraint orphan via raw SQL (column is NOT NULL now,
       // so we temporarily clear via a deferred check workaround: insert with
@@ -182,8 +222,7 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
       assert.equal(still.notebookId, notebook.id);
     });
 
-    it("migrates a user with conversations into My Notebook successfully", async () => {
-      // Fresh user with no notebooks yet — creating a chat must produce My Notebook.
+    it("requires indexed sources before a new user can chat", async () => {
       const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const legacyUser = await prisma.user.create({
         data: {
@@ -193,27 +232,21 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
       });
 
       try {
-        const before = await prisma.notebook.count({
-          where: { userId: legacyUser.id },
-        });
-        assert.equal(before, 0);
+        await assert.rejects(
+          () => createConversationForUser({ userId: legacyUser.id }),
+          /index at least one source/
+        );
+
+        const notebook = await getOrCreateDefaultNotebookForUser(legacyUser.id);
+        await seedReadySource(notebook.id);
 
         const conversation = await createConversationForUser({
           userId: legacyUser.id,
+          notebookId: notebook.id,
         });
 
-        const notebooks = await prisma.notebook.findMany({
-          where: { userId: legacyUser.id },
-        });
-        assert.equal(notebooks.length, 1);
-        assert.equal(notebooks[0]?.title, DEFAULT_NOTEBOOK_TITLE);
-        assert.equal(conversation.notebookId, notebooks[0]?.id);
-
-        // Root branch exists — legacy chat shape preserved.
-        const branchCount = await prisma.branch.count({
-          where: { conversationId: conversation.id },
-        });
-        assert.equal(branchCount, 1);
+        assert.equal(conversation.notebookId, notebook.id);
+        assert.equal(notebook.title, DEFAULT_NOTEBOOK_TITLE);
         assert.ok(conversation.activeBranchId);
       } finally {
         await prisma.user.delete({ where: { id: legacyUser.id } });
@@ -221,14 +254,18 @@ describe("conversation ↔ notebook", { skip: !hasDatabase }, () => {
     });
 
     it("ensures every new conversation always belongs to a notebook", async () => {
+      const explicit = await createNotebookForUser({
+        userId: userAId,
+        title: `Explicit ${Date.now()}`,
+      });
+      await seedReadySource(explicit.id);
+
+      const defaultNotebook = await getOrCreateDefaultNotebookForUser(userAId);
+      await seedReadySource(defaultNotebook.id);
+
       const withId = await createConversationForUser({
         userId: userAId,
-        notebookId: (
-          await createNotebookForUser({
-            userId: userAId,
-            title: `Explicit ${Date.now()}`,
-          })
-        ).id,
+        notebookId: explicit.id,
       });
       const withoutId = await createConversationForUser({
         userId: userAId,

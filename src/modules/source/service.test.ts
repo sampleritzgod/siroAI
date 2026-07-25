@@ -78,7 +78,7 @@ describe("source service", { skip: !hasDatabase }, () => {
     assert.ok(source.storagePath);
     assert.notEqual(source.storagePath, "pending");
     assert.match(source.extractedText ?? "", /Attention is all you need/);
-    assert.equal(source.indexingStatus, "PENDING");
+    assert.equal(source.indexingStatus, "INDEXED");
 
     const listed = await listSourcesForNotebook({
       userId: userAId,
@@ -92,7 +92,7 @@ describe("source service", { skip: !hasDatabase }, () => {
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });
   });
 
-  it("uploads a PDF and stores metadata without RAG indexing", async () => {
+  it("uploads a PDF and marks it indexed after text extraction", async () => {
     // Minimal PDF with extractable text (Hello).
     const pdfBytes = Buffer.from(
       `%PDF-1.1
@@ -132,9 +132,9 @@ startxref
     assert.equal(source.mimeType, "application/pdf");
     assert.ok(source.storagePath);
     assert.notEqual(source.storagePath, "pending");
-    assert.equal(source.indexingStatus, "PENDING");
+    assert.equal(source.indexingStatus, "INDEXED");
 
-    // Ensure chat RAG indexer was not invoked (no DocumentChunk for sources).
+    // Notebook source indexing does not write chat DocumentChunk rows.
     const chunks = await prisma.documentChunk.count({
       where: { attachmentId: source.id },
     });
@@ -159,14 +159,14 @@ startxref
     );
   });
 
-  it("updates status through processing then pending after extract", async () => {
+  it("updates status through processing then indexed after extract", async () => {
     const source = await createSourceFromUpload({
       userId: userAId,
       notebookId: notebookAId,
       file: makeTextFile("status.txt", "hello status"),
     });
 
-    assert.equal(source.indexingStatus, "PENDING");
+    assert.equal(source.indexingStatus, "INDEXED");
     assert.ok(source.extractedText);
 
     await deleteSourceForUser({ userId: userAId, sourceId: source.id });

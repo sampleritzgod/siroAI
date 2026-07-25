@@ -4,6 +4,13 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { cn } from "@/lib/utils";
 import { SOURCE_ALLOWED_MEDIA_TYPES } from "@/modules/source/constants";
 
+const INDEXING_STEPS = [
+  "Processing…",
+  "Extracting text…",
+  "Creating embeddings…",
+  "Indexing…",
+] as const;
+
 type AddSourceDialogProps = {
   open: boolean;
   notebookId: string | null;
@@ -42,6 +49,7 @@ function AddSourceDialogForm({
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stepIndex, setStepIndex] = useState(-1);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -54,6 +62,23 @@ function AddSourceDialogForm({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isPending, onClose]);
+
+  useEffect(() => {
+    if (!isPending) {
+      setStepIndex(-1);
+      return;
+    }
+
+    setStepIndex(0);
+    const timers = [
+      window.setTimeout(() => setStepIndex(1), 400),
+      window.setTimeout(() => setStepIndex(2), 900),
+      window.setTimeout(() => setStepIndex(3), 1400),
+    ];
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [isPending]);
 
   function uploadFile(file: File | undefined) {
     if (!file) return;
@@ -105,67 +130,72 @@ function AddSourceDialogForm({
           Add Source
         </h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Upload a PDF or plain text file to this notebook. Text will be
-          extracted now; indexing comes later.
+          Upload a PDF or plain text file. Chat unlocks after indexing finishes.
         </p>
 
-        <div className="mt-4 flex flex-col gap-2">
-          <input
-            ref={pdfInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="hidden"
-            disabled={isPending}
-            onChange={(event) => {
-              uploadFile(event.target.files?.[0]);
-              event.target.value = "";
-            }}
-          />
-          <input
-            ref={textInputRef}
-            type="file"
-            accept="text/plain,.txt"
-            className="hidden"
-            disabled={isPending}
-            onChange={(event) => {
-              uploadFile(event.target.files?.[0]);
-              event.target.value = "";
-            }}
-          />
+        {isPending ? (
+          <ol className="mt-5 space-y-2" aria-live="polite">
+            {INDEXING_STEPS.map((step, index) => (
+              <li
+                key={step}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-sm",
+                  index <= stepIndex
+                    ? "border-[var(--accent)]/40 bg-[var(--accent)]/5 text-[var(--foreground)]"
+                    : "border-[var(--border)] text-[var(--muted)]"
+                )}
+              >
+                {step}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="mt-4 flex flex-col gap-2">
+            <input
+              ref={pdfInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={(event) => {
+                uploadFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+            <input
+              ref={textInputRef}
+              type="file"
+              accept="text/plain,.txt"
+              className="hidden"
+              onChange={(event) => {
+                uploadFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
 
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => pdfInputRef.current?.click()}
-            className={cn(
-              "rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)] disabled:opacity-50"
-            )}
-          >
-            📄 Upload PDF
-          </button>
-          <button
-            type="button"
-            disabled={isPending}
-            onClick={() => textInputRef.current?.click()}
-            className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)] disabled:opacity-50"
-          >
-            📝 Upload Text File
-          </button>
+            <button
+              type="button"
+              onClick={() => pdfInputRef.current?.click()}
+              className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
+            >
+              📄 Upload PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => textInputRef.current?.click()}
+              className="rounded-xl border border-[var(--border)] px-3 py-3 text-left text-sm font-medium transition hover:bg-[var(--sidebar)]"
+            >
+              📝 Upload Text File
+            </button>
 
-          <p className="text-[11px] text-[var(--muted)]">
-            Allowed: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")}
-          </p>
-        </div>
+            <p className="text-[11px] text-[var(--muted)]">
+              Allowed: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")}
+            </p>
+          </div>
+        )}
 
         {error ? (
           <p className="mt-3 text-sm text-red-600" role="alert">
             {error}
-          </p>
-        ) : null}
-
-        {isPending ? (
-          <p className="mt-3 text-sm text-[var(--muted)]" aria-live="polite">
-            Uploading and extracting…
           </p>
         ) : null}
 

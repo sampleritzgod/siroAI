@@ -11,12 +11,32 @@ export type CreateConversationInput = {
 
 /**
  * Creates a conversation with a root branch under a notebook the user owns.
+ * Requires at least one indexed (ready) source in that notebook.
  */
 export async function createConversationForUser(input: CreateConversationInput) {
   const notebookId = await resolveNotebookIdForUser({
     userId: input.userId,
     notebookId: input.notebookId,
   });
+
+  const readySourceCount = await prisma.source.count({
+    where: {
+      notebookId,
+      OR: [
+        { indexingStatus: "INDEXED" },
+        {
+          indexingStatus: "PENDING",
+          extractedText: { not: null },
+        },
+      ],
+    },
+  });
+
+  if (readySourceCount === 0) {
+    throw new Error(
+      "Add and index at least one source before starting a chat."
+    );
+  }
 
   return prisma.$transaction(async (tx) => {
     const created = await tx.conversation.create({

@@ -10,7 +10,7 @@ import type { NotebookListItem } from "@/modules/notebook/service";
 const SUGGESTED_PROMPTS = [
   "Explain the key ideas in my sources",
   "Summarize my documents",
-  "Generate flashcards from this notebook",
+  "What should I know first?",
   "Quiz me on the material",
 ] as const;
 
@@ -18,6 +18,9 @@ type NotebookChatWelcomeProps = {
   notebook: NotebookListItem;
 };
 
+/**
+ * Shown only after the notebook has at least one indexed source.
+ */
 export function NotebookChatWelcome({ notebook }: NotebookChatWelcomeProps) {
   const router = useRouter();
   const [value, setValue] = useState("");
@@ -52,7 +55,7 @@ export function NotebookChatWelcome({ notebook }: NotebookChatWelcomeProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[var(--background)]">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[var(--background)]">
       <header className="flex h-14 shrink-0 items-center border-b border-[var(--border)] px-4">
         <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight">
           {notebook.title}
@@ -63,11 +66,10 @@ export function NotebookChatWelcome({ notebook }: NotebookChatWelcomeProps) {
         <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 py-8 text-center">
           <div className="flex flex-col gap-2">
             <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">
-              {notebook.title}
+              Chat with this notebook
             </h2>
             <p className="text-sm text-[var(--muted)]">
-              {notebook.description?.trim() ||
-                "Add sources, then ask anything about this notebook."}
+              Ask grounded questions about your sources.
             </p>
           </div>
 
@@ -99,7 +101,7 @@ export function NotebookChatWelcome({ notebook }: NotebookChatWelcomeProps) {
             value={value}
             onChange={(event) => setValue(event.target.value)}
             rows={2}
-            placeholder="Ask a question about your sources…"
+            placeholder="Ask about your sources…"
             disabled={isPending}
             className="w-full resize-none rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none placeholder:text-[var(--muted)] disabled:opacity-50"
             onKeyDown={(event) => {
@@ -115,9 +117,7 @@ export function NotebookChatWelcome({ notebook }: NotebookChatWelcomeProps) {
                 {error}
               </p>
             ) : (
-              <span className="text-xs text-[var(--muted)]">
-                Enter to send
-              </span>
+              <span className="text-xs text-[var(--muted)]">Enter to send</span>
             )}
             <button
               type="submit"
