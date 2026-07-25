@@ -44,7 +44,7 @@ describe("evaluateUploadSize boundaries", () => {
 
   for (const { label, bytes, expectOk } of cases) {
     it(`${label} (${bytes} bytes) => ok=${expectOk}`, () => {
-      const decision = evaluateUploadSize(bytes, `test:${label}`);
+      const decision = evaluateUploadSize(bytes);
       assert.equal(decision.ok, expectOk, decision.comparison);
       assert.equal(decision.bytes, bytes);
       assert.equal(decision.maxBytes, MAX_UPLOAD_BYTES);
@@ -59,21 +59,21 @@ describe("evaluateUploadSize boundaries", () => {
   }
 
   it("rejects empty files", () => {
-    const decision = evaluateUploadSize(0, "test:empty");
+    const decision = evaluateUploadSize(0);
     assert.equal(decision.ok, false);
     assert.equal(decision.reason, "empty_file");
   });
 
   it("6 MB requires direct upload on Vercel but passes app max", () => {
     const sixMb = mb(6);
-    assert.equal(evaluateUploadSize(sixMb, "test:6mb").ok, true);
+    assert.equal(evaluateUploadSize(sixMb).ok, true);
     assert.equal(requiresDirectUpload(sixMb), true);
     assert.equal(requiresDirectUpload(mb(4)), false);
   });
 
   it("real bigGientchess.pdf size (~5.75 MiB) passes app max", () => {
     const realPdfBytes = 6_033_367;
-    const decision = evaluateUploadSize(realPdfBytes, "test:bigGientchess");
+    const decision = evaluateUploadSize(realPdfBytes);
     assert.equal(decision.ok, true);
     assert.ok(realPdfBytes < MAX_UPLOAD_BYTES);
     assert.equal(requiresDirectUpload(realPdfBytes), true);

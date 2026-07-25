@@ -6,6 +6,7 @@ export {
   evaluateUploadSize,
   requiresDirectUpload,
   uploadSizeErrorMessage,
+  uploadSizeLogFields,
 } from "@/modules/files/upload-size";
 
 export const ALLOWED_MEDIA_TYPES = [

@@ -123,7 +123,7 @@ function AddSourceDialogForm({
   const displayElapsedSec = isUploading ? elapsedSec : 0;
 
   function validateFile(file: File): string | null {
-    const sizeCheck = evaluateUploadSize(file.size, "add-source-dialog:client");
+    const sizeCheck = evaluateUploadSize(file.size);
     if (!sizeCheck.ok) {
       return uploadSizeErrorMessage(sizeCheck);
     }

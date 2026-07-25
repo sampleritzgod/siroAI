@@ -86,7 +86,7 @@ export function ChatComposer({
 
     const selected = Array.from(fileList).slice(0, 5);
     for (const file of selected) {
-      const sizeCheck = evaluateUploadSize(file.size, "chat-composer:client");
+      const sizeCheck = evaluateUploadSize(file.size);
       if (!sizeCheck.ok) {
         setUploadNotice({
           tone: "error",

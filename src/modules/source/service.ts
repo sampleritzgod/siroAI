@@ -37,6 +37,7 @@ import {
 import {
   evaluateUploadSize,
   uploadSizeErrorMessage,
+  uploadSizeLogFields,
 } from "@/modules/files/upload-size";
 import {
   defaultTitleFromWebsite,
@@ -451,7 +452,11 @@ export async function createSourceFromUpload(input: {
     throw payloadTooLarge("File is empty.");
   }
 
-  const sizeCheck = evaluateUploadSize(input.file.size, "createSourceFromUpload");
+  const sizeCheck = evaluateUploadSize(input.file.size);
+  logger.info(
+    "[UPLOAD_SIZE] check",
+    uploadSizeLogFields(sizeCheck, "createSourceFromUpload")
+  );
   if (!sizeCheck.ok) {
     uploadStage.error(new Error("File too large"), {
       size: sizeCheck.bytes,
@@ -719,7 +724,11 @@ export async function beginSourceDirectUpload(input: {
     throw payloadTooLarge("File is empty.");
   }
 
-  const sizeCheck = evaluateUploadSize(input.size, "beginSourceDirectUpload");
+  const sizeCheck = evaluateUploadSize(input.size);
+  logger.info(
+    "[UPLOAD_SIZE] check",
+    uploadSizeLogFields(sizeCheck, "beginSourceDirectUpload")
+  );
   if (!sizeCheck.ok) {
     throw payloadTooLarge(uploadSizeErrorMessage(sizeCheck));
   }
@@ -836,7 +845,11 @@ export async function completeSourceDirectUpload(input: {
     throw payloadTooLarge("File is empty.");
   }
 
-  const sizeCheck = evaluateUploadSize(bytes.length, "completeSourceDirectUpload");
+  const sizeCheck = evaluateUploadSize(bytes.length);
+  logger.info(
+    "[UPLOAD_SIZE] check",
+    uploadSizeLogFields(sizeCheck, "completeSourceDirectUpload")
+  );
   if (!sizeCheck.ok) {
     await deleteStoredUpload({
       objectId: source.id,

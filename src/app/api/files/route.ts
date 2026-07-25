@@ -19,6 +19,7 @@ import {
 import {
   evaluateUploadSize,
   uploadSizeErrorMessage,
+  uploadSizeLogFields,
 } from "@/modules/files/upload-size";
 import { extractAttachmentContent } from "@/modules/files/extract-text";
 import { storeUpload } from "@/modules/files/storage";
@@ -110,7 +111,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const sizeCheck = evaluateUploadSize(file.size, "api/files");
+    const sizeCheck = evaluateUploadSize(file.size);
+    logger.info(
+      "[UPLOAD_SIZE] check",
+      uploadSizeLogFields(sizeCheck, "api/files")
+    );
     if (!sizeCheck.ok) {
       return toErrorResponse(
         payloadTooLarge(uploadSizeErrorMessage(sizeCheck)),

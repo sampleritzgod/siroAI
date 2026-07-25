@@ -1,11 +1,12 @@
-import { logger } from "@/lib/logger";
-
 /**
  * Single source of truth for user-upload size limits (sources + chat attachments).
  *
  * NOTE: Vercel Functions reject request bodies over ~4.5MB. That is a platform
  * proxy limit — NOT MAX_UPLOAD_BYTES. Files above VERCEL_FUNCTION_BODY_LIMIT_BYTES
  * must use browser→S3 direct upload. Never map a Vercel 413 to “exceeds MAX_UPLOAD”.
+ *
+ * This module is intentionally dependency-free so client components can import it
+ * without pulling Node-only packages (@sentry/node via logger).
  */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MiB
 
@@ -34,12 +35,10 @@ export type UploadSizeDecision = {
 };
 
 /**
- * Validate upload size against MAX_UPLOAD_BYTES and emit structured diagnostics.
+ * Validate upload size against MAX_UPLOAD_BYTES.
+ * Callers that need diagnostics should log the returned decision on the server.
  */
-export function evaluateUploadSize(
-  bytes: number,
-  context: string
-): UploadSizeDecision {
+export function evaluateUploadSize(bytes: number): UploadSizeDecision {
   const mb = bytesToMb(bytes);
   const maxMb = bytesToMb(MAX_UPLOAD_BYTES);
   const empty = bytes <= 0;
@@ -56,7 +55,7 @@ export function evaluateUploadSize(
       ? "exceeds_max_upload_bytes"
       : null;
 
-  const decision: UploadSizeDecision = {
+  return {
     ok,
     bytes,
     mb,
@@ -65,21 +64,6 @@ export function evaluateUploadSize(
     comparison,
     reason,
   };
-
-  logger.info("[UPLOAD_SIZE] check", {
-    context,
-    ...decision,
-    fileSizeBytes: bytes,
-    fileSizeMb: Number(mb.toFixed(4)),
-    configuredMaxBytes: MAX_UPLOAD_BYTES,
-    configuredMaxMb: maxMb,
-    rejected: !ok,
-    rejectedReason: reason,
-    requiresDirectUpload: requiresDirectUpload(bytes),
-    vercelBodyLimitBytes: VERCEL_FUNCTION_BODY_LIMIT_BYTES,
-  });
-
-  return decision;
 }
 
 /** True when the file cannot safely travel through a Vercel Function body. */
@@ -92,4 +76,23 @@ export function uploadSizeErrorMessage(decision: UploadSizeDecision): string {
     return "File is empty.";
   }
   return `File too large (${formatUploadMb(decision.bytes)}). Maximum size is ${formatUploadMb(decision.maxBytes)}.`;
+}
+
+/** Structured fields for server-side `[UPLOAD_SIZE] check` logs. */
+export function uploadSizeLogFields(
+  decision: UploadSizeDecision,
+  context: string
+): Record<string, unknown> {
+  return {
+    context,
+    ...decision,
+    fileSizeBytes: decision.bytes,
+    fileSizeMb: Number(decision.mb.toFixed(4)),
+    configuredMaxBytes: decision.maxBytes,
+    configuredMaxMb: decision.maxMb,
+    rejected: !decision.ok,
+    rejectedReason: decision.reason,
+    requiresDirectUpload: requiresDirectUpload(decision.bytes),
+    vercelBodyLimitBytes: VERCEL_FUNCTION_BODY_LIMIT_BYTES,
+  };
 }
