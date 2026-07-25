@@ -1,6 +1,6 @@
 import { MobileNavButton } from "@/components/mobile-nav-button";
-import { startNewChat } from "@/modules/conversation/actions/conversation-actions";
 import { requireUser } from "@/modules/auth/actions/require-user";
+import { HomeNewChatButton } from "@/modules/notebook/components/home-new-chat-button";
 
 export default async function HomePage() {
   const user = await requireUser();
@@ -26,19 +26,12 @@ export default async function HomePage() {
             Welcome, {displayName}
           </h1>
           <p className="max-w-md text-sm text-[var(--muted)] sm:text-base">
-            Start a new chat to stream replies. Use the menu to browse
-            conversations on mobile.
+            Select a notebook in the sidebar, then start a chat. Conversations
+            stay organized inside the notebook you choose.
           </p>
         </div>
 
-        <form action={startNewChat}>
-          <button
-            type="submit"
-            className="rounded-xl bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
-          >
-            New chat
-          </button>
-        </form>
+        <HomeNewChatButton />
       </div>
     </div>
   );

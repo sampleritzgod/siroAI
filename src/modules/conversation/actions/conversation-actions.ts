@@ -13,6 +13,7 @@ import { assertConversationOwner } from "@/modules/conversation/ownership";
 
 export type ConversationListItem = {
   id: string;
+  notebookId: string;
   title: string;
   isPinned: boolean;
   isArchived: boolean;
@@ -37,7 +38,11 @@ export async function listConversations(): Promise<ConversationListItem[]> {
   const key = cacheKeys.convList(user.id);
 
   const cached = await cacheGetJson<CachedConversationListItem[]>(key);
-  if (cached) {
+  // Ignore legacy cache entries that predate notebookId.
+  if (
+    cached &&
+    cached.every((item) => typeof item.notebookId === "string")
+  ) {
     return cached.map(reviveListItem);
   }
 
@@ -49,6 +54,7 @@ export async function listConversations(): Promise<ConversationListItem[]> {
     orderBy: [{ isPinned: "desc" }, { lastMessageAt: "desc" }],
     select: {
       id: true,
+      notebookId: true,
       title: true,
       isPinned: true,
       isArchived: true,
@@ -82,6 +88,7 @@ export async function listArchivedConversations(): Promise<
     take: 50,
     select: {
       id: true,
+      notebookId: true,
       title: true,
       isPinned: true,
       isArchived: true,
@@ -184,22 +191,32 @@ export async function getConversation(conversationId: string) {
   return conversation;
 }
 
+function resolveNotebookIdArg(input?: string | FormData): string | undefined {
+  if (typeof input === "string" && input.trim()) {
+    return input.trim();
+  }
+
+  if (input instanceof FormData) {
+    const value = input.get("notebookId");
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Creates a conversation with a root branch and redirects to it.
- * Uses the user's default notebook when notebookId is omitted (current UI).
- * Accepts FormData when used as a <form action> (Next.js passes FormData).
+ * Uses the user's default notebook when notebookId is omitted.
+ * Accepts FormData when used as a <form action> (field: notebookId).
  */
 export async function startNewChat(notebookId?: string | FormData) {
   const user = await requireUser();
 
-  const resolvedNotebookId =
-    typeof notebookId === "string" && notebookId.trim()
-      ? notebookId.trim()
-      : undefined;
-
   const conversation = await createConversationForUser({
     userId: user.id,
-    notebookId: resolvedNotebookId,
+    notebookId: resolveNotebookIdArg(notebookId),
   });
 
   await invalidateConversationCaches({ userId: user.id });

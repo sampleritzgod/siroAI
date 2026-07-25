@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import {
   createNotebookForUser,
@@ -21,11 +22,14 @@ export async function createNotebook(input: {
   description?: string | null;
 }): Promise<NotebookRecord> {
   const user = await requireUser();
-  return createNotebookForUser({
+  const notebook = await createNotebookForUser({
     userId: user.id,
     title: input.title,
     description: input.description,
   });
+
+  revalidatePath("/");
+  return notebook;
 }
 
 /**
@@ -55,18 +59,23 @@ export async function updateNotebook(input: {
   description?: string | null;
 }): Promise<NotebookRecord> {
   const user = await requireUser();
-  return updateNotebookForUser({
+  const notebook = await updateNotebookForUser({
     userId: user.id,
     notebookId: input.id,
     title: input.title,
     description: input.description,
   });
+
+  revalidatePath("/");
+  return notebook;
 }
 
 /**
  * Deletes a notebook owned by the signed-in user.
+ * Refuses to delete the user's only notebook.
  */
 export async function deleteNotebook(id: string): Promise<void> {
   const user = await requireUser();
   await deleteNotebookForUser({ userId: user.id, notebookId: id });
+  revalidatePath("/");
 }

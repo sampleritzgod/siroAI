@@ -14,6 +14,11 @@ import { NOTEBOOK_TITLE_MAX_LENGTH } from "@/modules/notebook/validation";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL?.trim());
 
+/** Test cleanup bypasses the "last notebook" product guard. */
+async function forceDeleteNotebook(notebookId: string) {
+  await prisma.notebook.delete({ where: { id: notebookId } });
+}
+
 describe("notebook service", { skip: !hasDatabase }, () => {
   let userAId = "";
   let userBId = "";
@@ -61,10 +66,7 @@ describe("notebook service", { skip: !hasDatabase }, () => {
       assert.ok(notebook.createdAt instanceof Date);
       assert.ok(notebook.updatedAt instanceof Date);
 
-      await deleteNotebookForUser({
-        userId: userAId,
-        notebookId: notebook.id,
-      });
+      await forceDeleteNotebook(notebook.id);
     });
 
     it("rejects invalid titles", async () => {
@@ -105,10 +107,7 @@ describe("notebook service", { skip: !hasDatabase }, () => {
       assert.equal(updated.title, "Final");
       assert.equal(updated.description, "Ready");
 
-      await deleteNotebookForUser({
-        userId: userAId,
-        notebookId: created.id,
-      });
+      await forceDeleteNotebook(created.id);
     });
 
     it("rejects invalid title updates", async () => {
@@ -127,18 +126,19 @@ describe("notebook service", { skip: !hasDatabase }, () => {
         /Title is required/
       );
 
-      await deleteNotebookForUser({
-        userId: userAId,
-        notebookId: created.id,
-      });
+      await forceDeleteNotebook(created.id);
     });
   });
 
   describe("deleteNotebookForUser", () => {
-    it("deletes an owned notebook", async () => {
+    it("deletes an owned notebook when another remains", async () => {
+      const keep = await createNotebookForUser({
+        userId: userAId,
+        title: `Keep ${Date.now()}`,
+      });
       const created = await createNotebookForUser({
         userId: userAId,
-        title: "Disposable",
+        title: `Disposable ${Date.now()}`,
       });
 
       await deleteNotebookForUser({
@@ -151,6 +151,47 @@ describe("notebook service", { skip: !hasDatabase }, () => {
         notebookId: created.id,
       });
       assert.equal(found, null);
+
+      const kept = await getNotebookForUser({
+        userId: userAId,
+        notebookId: keep.id,
+      });
+      assert.ok(kept);
+      await forceDeleteNotebook(keep.id);
+    });
+
+    it("prevents deleting the user's only notebook", async () => {
+      const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const solo = await prisma.user.create({
+        data: {
+          clerkId: `test_notebook_solo_${suffix}`,
+          email: `notebook-solo-${suffix}@example.com`,
+        },
+      });
+
+      try {
+        const only = await createNotebookForUser({
+          userId: solo.id,
+          title: "Only one",
+        });
+
+        await assert.rejects(
+          () =>
+            deleteNotebookForUser({
+              userId: solo.id,
+              notebookId: only.id,
+            }),
+          /at least one notebook/
+        );
+
+        const still = await getNotebookForUser({
+          userId: solo.id,
+          notebookId: only.id,
+        });
+        assert.ok(still);
+      } finally {
+        await prisma.user.delete({ where: { id: solo.id } });
+      }
     });
   });
 
@@ -167,10 +208,7 @@ describe("notebook service", { skip: !hasDatabase }, () => {
       });
       assert.equal(asB, null);
 
-      await deleteNotebookForUser({
-        userId: userAId,
-        notebookId: created.id,
-      });
+      await forceDeleteNotebook(created.id);
     });
 
     it("rejects update and delete by a non-owner", async () => {
@@ -204,10 +242,7 @@ describe("notebook service", { skip: !hasDatabase }, () => {
       });
       assert.equal(stillThere?.title, "Owned by A");
 
-      await deleteNotebookForUser({
-        userId: userAId,
-        notebookId: created.id,
-      });
+      await forceDeleteNotebook(created.id);
     });
   });
 
@@ -240,12 +275,16 @@ describe("notebook service", { skip: !hasDatabase }, () => {
       assert.equal(idsB.has(a1.id), false);
       assert.equal(idsB.has(a2.id), false);
 
-      await deleteNotebookForUser({ userId: userAId, notebookId: a1.id });
-      await deleteNotebookForUser({ userId: userAId, notebookId: a2.id });
-      await deleteNotebookForUser({ userId: userBId, notebookId: b1.id });
+      await forceDeleteNotebook(a1.id);
+      await forceDeleteNotebook(a2.id);
+      await forceDeleteNotebook(b1.id);
     });
 
     it("persists create → read → update → delete round trip", async () => {
+      const spare = await createNotebookForUser({
+        userId: userAId,
+        title: "Spare",
+      });
       const created = await createNotebookForUser({
         userId: userAId,
         title: "Round trip",
@@ -277,6 +316,7 @@ describe("notebook service", { skip: !hasDatabase }, () => {
         where: { id: created.id },
       });
       assert.equal(gone, null);
+      await forceDeleteNotebook(spare.id);
     });
   });
 });

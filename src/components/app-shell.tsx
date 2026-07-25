@@ -3,15 +3,18 @@ import {
   listArchivedConversations,
   listConversations,
 } from "@/modules/conversation/actions/conversation-actions";
+import { getUserNotebooks } from "@/modules/notebook/actions/notebook-actions";
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
-  const [conversations, archivedConversations] = await Promise.all([
+  const [notebooks, conversations, archivedConversations] = await Promise.all([
+    getUserNotebooks(),
     listConversations(),
     listArchivedConversations(),
   ]);
 
   return (
     <AppShellClient
+      notebooks={notebooks}
       conversations={conversations}
       archivedConversations={archivedConversations}
     >

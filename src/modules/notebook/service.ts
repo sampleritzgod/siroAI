@@ -124,6 +124,16 @@ export async function deleteNotebookForUser(input: {
 }): Promise<void> {
   await assertNotebookOwner(input.notebookId, input.userId);
 
+  const notebookCount = await prisma.notebook.count({
+    where: { userId: input.userId },
+  });
+
+  if (notebookCount <= 1) {
+    throw new Error(
+      "You need at least one notebook. Create another notebook before deleting this one."
+    );
+  }
+
   await prisma.notebook.delete({
     where: { id: input.notebookId },
   });
