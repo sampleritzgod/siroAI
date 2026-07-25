@@ -7,6 +7,9 @@ import type { ModelDefinition } from "@/modules/ai/model-registry";
 import {
   ALLOWED_MEDIA_TYPES,
   MAX_UPLOAD_BYTES,
+  evaluateUploadSize,
+  formatUploadMb,
+  uploadSizeErrorMessage,
 } from "@/modules/files/constants";
 
 export type ComposerAttachment = FileUIPart & {
@@ -83,10 +86,11 @@ export function ChatComposer({
 
     const selected = Array.from(fileList).slice(0, 5);
     for (const file of selected) {
-      if (file.size > MAX_UPLOAD_BYTES) {
+      const sizeCheck = evaluateUploadSize(file.size, "chat-composer:client");
+      if (!sizeCheck.ok) {
         setUploadNotice({
           tone: "error",
-          message: `“${file.name}” is too large (max ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB).`,
+          message: `“${file.name}” — ${uploadSizeErrorMessage(sizeCheck)}`,
         });
         continue;
       }
@@ -225,7 +229,7 @@ export function ChatComposer({
           <button
             type="button"
             disabled={disabled || busy || uploading}
-            title={`Attach image, PDF, or text (max ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB)`}
+            title={`Attach image, PDF, or text (max ${formatUploadMb(MAX_UPLOAD_BYTES)})`}
             onClick={() => fileInputRef.current?.click()}
             className="rounded-full border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--muted)] transition hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
           >

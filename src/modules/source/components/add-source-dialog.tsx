@@ -7,6 +7,12 @@ import {
   SOURCE_ALLOWED_MEDIA_TYPES,
   resolveSourceMediaType,
 } from "@/modules/source/constants";
+import {
+  evaluateUploadSize,
+  formatUploadMb,
+  requiresDirectUpload,
+  uploadSizeErrorMessage,
+} from "@/modules/files/upload-size";
 
 const UPLOAD_STEPS = [
   "Uploading file…",
@@ -26,12 +32,6 @@ const YOUTUBE_STEPS = [
   "Downloading transcript…",
   "Queuing indexing…",
 ] as const;
-
-function formatMb(bytes: number): string {
-  const mb = bytes / (1024 * 1024);
-  if (mb >= 100) return `${Math.round(mb)}MB`;
-  return `${mb.toFixed(mb >= 10 ? 0 : 1)}MB`;
-}
 
 type AddSourceDialogProps = {
   open: boolean;
@@ -123,11 +123,9 @@ function AddSourceDialogForm({
   const displayElapsedSec = isUploading ? elapsedSec : 0;
 
   function validateFile(file: File): string | null {
-    if (!file.size) {
-      return "File is empty.";
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      return `File too large (${formatMb(file.size)}). Maximum size is ${formatMb(MAX_UPLOAD_BYTES)}.`;
+    const sizeCheck = evaluateUploadSize(file.size, "add-source-dialog:client");
+    if (!sizeCheck.ok) {
+      return uploadSizeErrorMessage(sizeCheck);
     }
     const mediaType = resolveSourceMediaType({
       filename: file.name,
@@ -160,9 +158,8 @@ function AddSourceDialogForm({
     setElapsedSec(0);
     setIsUploading(true);
 
-    // Vercel Functions reject request bodies over ~4.5MB. Files above that
-    // must use browser→S3 direct upload — never multipart through /api/sources.
-    const mustUseDirectUpload = file.size > 4 * 1024 * 1024;
+    // Vercel Functions reject bodies over ~4.5MB. That is NOT MAX_UPLOAD_BYTES.
+    const mustUseDirectUpload = requiresDirectUpload(file.size);
 
     try {
       const mediaType =
@@ -233,7 +230,7 @@ function AddSourceDialogForm({
           presignPayload?.error ||
             (presignResponse.status === 501
               ? "Cloud storage is not configured for large files. Set AWS S3 env vars on Vercel."
-              : `Upload failed (${presignResponse.status}). Your file is ${formatMb(file.size)} — well under the ${formatMb(MAX_UPLOAD_BYTES)} app limit.`)
+              : `Upload failed (${presignResponse.status}). Your file is ${formatUploadMb(file.size)} — under the ${formatUploadMb(MAX_UPLOAD_BYTES)} app limit.`)
         );
         return;
       }
@@ -314,7 +311,7 @@ function AddSourceDialogForm({
       if (response.status === 413) {
         // Vercel proxy limit (~4.5MB), NOT the app’s MAX_UPLOAD_BYTES.
         const sizeHint =
-          typeof fileSize === "number" ? ` (${formatMb(fileSize)})` : "";
+          typeof fileSize === "number" ? ` (${formatUploadMb(fileSize)})` : "";
         setError(
           payload?.error && !/maximum size is/i.test(payload.error)
             ? payload.error
@@ -558,7 +555,7 @@ function AddSourceDialogForm({
 
             <p className="text-[11px] text-[var(--muted)]">
               Files: {SOURCE_ALLOWED_MEDIA_TYPES.join(", ")} (max{" "}
-              {MAX_UPLOAD_BYTES / (1024 * 1024)}MB) · Websites &amp;
+              {formatUploadMb(MAX_UPLOAD_BYTES)}) · Websites &amp;
               YouTube: public http(s) links
             </p>
           </div>

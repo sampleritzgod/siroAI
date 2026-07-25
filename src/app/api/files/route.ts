@@ -14,9 +14,12 @@ import { RATE_LIMITS, rateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { requireUser } from "@/modules/auth/actions/require-user";
 import {
   ALLOWED_MEDIA_TYPES,
-  MAX_UPLOAD_BYTES,
   isAllowedMediaType,
 } from "@/modules/files/constants";
+import {
+  evaluateUploadSize,
+  uploadSizeErrorMessage,
+} from "@/modules/files/upload-size";
 import { extractAttachmentContent } from "@/modules/files/extract-text";
 import { storeUpload } from "@/modules/files/storage";
 import { enqueueAttachmentIndexing } from "@/modules/jobs/enqueue";
@@ -107,11 +110,10 @@ export async function POST(req: Request) {
       );
     }
 
-    if (file.size <= 0 || file.size > MAX_UPLOAD_BYTES) {
+    const sizeCheck = evaluateUploadSize(file.size, "api/files");
+    if (!sizeCheck.ok) {
       return toErrorResponse(
-        payloadTooLarge(
-          `File must be between 1 byte and ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB`
-        ),
+        payloadTooLarge(uploadSizeErrorMessage(sizeCheck)),
         { "X-Request-Id": requestId }
       );
     }

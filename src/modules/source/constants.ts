@@ -13,6 +13,7 @@ import {
   validation,
 } from "@/lib/errors";
 import { MAX_UPLOAD_BYTES } from "@/modules/files/constants";
+import { formatUploadMb } from "@/modules/files/upload-size";
 
 export { MAX_UPLOAD_BYTES };
 
@@ -207,7 +208,7 @@ export function toSourceAppError(error: unknown): AppError {
     return payloadTooLarge(
       message.includes("MB") || /empty/i.test(message)
         ? message
-        : `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
+        : `File too large. Maximum size is ${formatUploadMb(MAX_UPLOAD_BYTES)}.`
     );
   }
   if (

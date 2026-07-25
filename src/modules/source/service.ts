@@ -26,7 +26,6 @@ import {
 import { indexSourceForRag } from "@/modules/rag/index-source";
 import { stageLog } from "@/modules/rag/pipeline-log";
 import {
-  MAX_UPLOAD_BYTES,
   SOURCE_TITLE_MAX_LENGTH,
   WEBSITE_STORAGE_PATH,
   YOUTUBE_STORAGE_PATH,
@@ -35,6 +34,10 @@ import {
   resolveSourceMediaType,
   sourceTypeFromMediaType,
 } from "@/modules/source/constants";
+import {
+  evaluateUploadSize,
+  uploadSizeErrorMessage,
+} from "@/modules/files/upload-size";
 import {
   defaultTitleFromWebsite,
   fetchWebsiteContent,
@@ -448,14 +451,15 @@ export async function createSourceFromUpload(input: {
     throw payloadTooLarge("File is empty.");
   }
 
-  if (input.file.size > MAX_UPLOAD_BYTES) {
+  const sizeCheck = evaluateUploadSize(input.file.size, "createSourceFromUpload");
+  if (!sizeCheck.ok) {
     uploadStage.error(new Error("File too large"), {
-      size: input.file.size,
-      max: MAX_UPLOAD_BYTES,
+      size: sizeCheck.bytes,
+      max: sizeCheck.maxBytes,
+      comparison: sizeCheck.comparison,
+      reason: sizeCheck.reason,
     });
-    throw payloadTooLarge(
-      `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
-    );
+    throw payloadTooLarge(uploadSizeErrorMessage(sizeCheck));
   }
 
   const bytes = Buffer.from(await input.file.arrayBuffer());
@@ -715,10 +719,9 @@ export async function beginSourceDirectUpload(input: {
     throw payloadTooLarge("File is empty.");
   }
 
-  if (input.size > MAX_UPLOAD_BYTES) {
-    throw payloadTooLarge(
-      `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
-    );
+  const sizeCheck = evaluateUploadSize(input.size, "beginSourceDirectUpload");
+  if (!sizeCheck.ok) {
+    throw payloadTooLarge(uploadSizeErrorMessage(sizeCheck));
   }
 
   const type = sourceTypeFromMediaType(mediaType);
@@ -833,16 +836,15 @@ export async function completeSourceDirectUpload(input: {
     throw payloadTooLarge("File is empty.");
   }
 
-  if (bytes.length > MAX_UPLOAD_BYTES) {
+  const sizeCheck = evaluateUploadSize(bytes.length, "completeSourceDirectUpload");
+  if (!sizeCheck.ok) {
     await deleteStoredUpload({
       objectId: source.id,
       storage: "S3",
       storageKey,
     }).catch(() => {});
     await prisma.source.delete({ where: { id: source.id } }).catch(() => {});
-    throw payloadTooLarge(
-      `File too large. Maximum size is ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB.`
-    );
+    throw payloadTooLarge(uploadSizeErrorMessage(sizeCheck));
   }
 
   try {
