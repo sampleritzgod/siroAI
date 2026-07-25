@@ -4,9 +4,19 @@ import {
   YoutubeTranscriptNotAvailableError,
   YoutubeTranscriptTooManyRequestError,
   YoutubeTranscriptVideoUnavailableError,
+  type TranscriptConfig,
   type TranscriptResponse,
 } from "youtube-transcript";
 import { SOURCE_TITLE_MAX_LENGTH } from "@/modules/source/constants";
+
+/** Injectable for tests — defaults to the youtube-transcript package. */
+export const youtubeTranscriptClient = {
+  fetchTranscript: (
+    videoId: string,
+    config?: TranscriptConfig
+  ): Promise<TranscriptResponse[]> =>
+    YoutubeTranscript.fetchTranscript(videoId, config),
+};
 
 export const YOUTUBE_FETCH_TIMEOUT_MS = 20_000;
 export const YOUTUBE_MIN_TRANSCRIPT_CHARS = 40;
@@ -222,7 +232,7 @@ async function fetchYoutubeTranscript(
   signal: AbortSignal
 ): Promise<TranscriptResponse[]> {
   try {
-    return await YoutubeTranscript.fetchTranscript(videoId, {
+    return await youtubeTranscriptClient.fetchTranscript(videoId, {
       fetch: (input, init) =>
         fetch(input, {
           ...init,
