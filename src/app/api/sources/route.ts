@@ -12,6 +12,10 @@ import {
   finalizeSourceIndexing,
 } from "@/modules/source/service";
 
+// Background indexing (chunk + embed + vector insert) runs via after() inside
+// this function's lifetime. Default duration can kill it mid-index on Vercel.
+export const maxDuration = 60;
+
 function jsonError(
   message: string,
   status: number,

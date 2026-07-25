@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { chunkText } from "@/modules/rag/chunk";
 import {
@@ -132,24 +133,29 @@ export async function indexSourceForRag(input: {
       DELETE FROM "DocumentChunk" WHERE "sourceId" = ${input.sourceId}
     `;
 
-    for (let i = 0; i < chunks.length; i += 1) {
-      const chunk = chunks[i]!;
-      const embedding = embeddings[i]!;
-      const id = createId();
-      const vector = toVectorLiteral(embedding);
-
-      await prisma.$executeRaw`
-        INSERT INTO "DocumentChunk"
-          ("id", "notebookId", "sourceId", "chunkIndex", "content", "embedding", "createdAt")
-        VALUES (
-          ${id},
+    // Multi-row inserts: one round trip per batch instead of per chunk.
+    // Critical on serverless (Vercel → Neon), where 100 sequential inserts
+    // can take 20s+ and blow past the function time limit.
+    const INSERT_BATCH_SIZE = 30;
+    for (let i = 0; i < chunks.length; i += INSERT_BATCH_SIZE) {
+      const batch = chunks.slice(i, i + INSERT_BATCH_SIZE);
+      const rows = batch.map((chunk, j) => {
+        const embedding = embeddings[i + j]!;
+        return Prisma.sql`(
+          ${createId()},
           ${input.notebookId},
           ${input.sourceId},
           ${chunk.index},
           ${chunk.content},
-          ${vector}::vector,
+          ${toVectorLiteral(embedding)}::vector,
           NOW()
-        )
+        )`;
+      });
+
+      await prisma.$executeRaw`
+        INSERT INTO "DocumentChunk"
+          ("id", "notebookId", "sourceId", "chunkIndex", "content", "embedding", "createdAt")
+        VALUES ${Prisma.join(rows)}
       `;
     }
 
