@@ -1,5 +1,4 @@
-"use server";
-
+import { cache } from "react";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/db";
 import { onboard } from "@/modules/auth/actions/onboard";
@@ -7,9 +6,12 @@ import { onboard } from "@/modules/auth/actions/onboard";
 /**
  * Returns the Prisma user for the signed-in Clerk session.
  *
- * Layout onboard() and page data can race — upsert when the lookup misses.
+ * Cached per React request so AppShell's parallel data loaders share one
+ * auth.protect() + findUnique instead of repeating them.
+ *
+ * currentUser() / onboard() run only when the local row is missing.
  */
-export async function requireUser() {
+export const requireUser = cache(async () => {
   const { userId } = await auth.protect();
 
   const existing = await prisma.user.findUnique({
@@ -21,4 +23,4 @@ export async function requireUser() {
   }
 
   return onboard();
-}
+});

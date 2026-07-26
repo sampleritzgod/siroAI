@@ -1,19 +1,19 @@
-import { auth } from "@clerk/nextjs/server";
 import { AppShell } from "@/components/app-shell";
-import { onboard } from "@/modules/auth/actions/onboard";
+import { requireUser } from "@/modules/auth/actions/require-user";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Authenticated app shell — protects routes and syncs Clerk → Prisma user.
+ * Authenticated app shell.
+ * requireUser() (React.cache) protects the session and ensures a local
+ * Prisma user exists — without calling currentUser() on every navigation.
  */
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  await auth.protect();
-  await onboard();
+  await requireUser();
 
   return <AppShell>{children}</AppShell>;
 }
