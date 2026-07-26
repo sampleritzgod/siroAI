@@ -152,7 +152,6 @@ export function NotebookAppShell({
     } else {
       router.push("/");
     }
-    router.refresh();
   }
 
   function handleNotebookDeleted(deletedId: string) {
@@ -167,7 +166,6 @@ export function NotebookAppShell({
     if (pathname.startsWith("/c/")) {
       router.push("/");
     }
-    router.refresh();
   }
 
   function createFirstNotebook() {
@@ -177,7 +175,6 @@ export function NotebookAppShell({
         .then((created) => {
           writeActiveNotebookId(created.id);
           router.push("/");
-          router.refresh();
         })
         .catch((error) => {
           setCreateError(

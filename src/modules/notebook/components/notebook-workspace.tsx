@@ -152,7 +152,6 @@ export function NotebookWorkspace({
     void createConversation(notebook.id)
       .then((conversation) => {
         router.replace(`/c/${conversation.id}`);
-        router.refresh();
       })
       .catch((error) => {
         autoCreated.current.delete(notebook.id);
@@ -177,7 +176,9 @@ export function NotebookWorkspace({
       sources={effectiveSources}
       onRefresh={() => {
         setPolledSources(null);
-        router.refresh();
+        void listNotebookSources(notebook.id).then((fresh) => {
+          setPolledSources(fresh);
+        });
       }}
     />
   ) : (

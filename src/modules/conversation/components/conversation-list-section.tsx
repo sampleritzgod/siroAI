@@ -38,7 +38,8 @@ export function ConversationListSection({
 
   function run(action: () => Promise<void>) {
     startTransition(() => {
-      void action().then(() => router.refresh());
+      // Server action revalidatePath updates the shell — no second full refresh.
+      void action();
     });
   }
 

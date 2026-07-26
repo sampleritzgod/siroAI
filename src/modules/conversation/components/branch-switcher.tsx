@@ -66,7 +66,6 @@ export function BranchSwitcher({
     startTransition(() => {
       void setActiveBranch(conversationId, branchId).then(() => {
         router.push(`/c/${conversationId}?branch=${branchId}`);
-        router.refresh();
         setOpen(false);
       });
     });
@@ -152,7 +151,6 @@ export function BranchSwitcher({
                   void renameBranch(active.id, renameValue).then(() => {
                     setRenaming(false);
                     setMenuOpen(false);
-                    router.refresh();
                   });
                 });
               }}
@@ -199,7 +197,6 @@ export function BranchSwitcher({
                         router.push(
                           `/c/${conversationId}?branch=${result.activeBranchId}`
                         );
-                        router.refresh();
                       });
                     });
                   }}

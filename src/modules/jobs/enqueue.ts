@@ -7,29 +7,82 @@ import {
   indexSourceIdempotencyKey,
 } from "@/modules/jobs/queue";
 import { lifecycleLogMessage } from "@/modules/jobs/lifecycle";
-import { processJobs } from "@/modules/jobs/worker";
 
 /**
- * Persist an indexing job and drain aggressively via after().
+ * Persist indexing jobs only. Never run processJobs() on interactive paths.
  *
- * On Vercel Hobby, native Cron is limited to once/day — so after() is the
- * primary near-real-time drain. Cron (daily) + external schedulers remain
- * the backup for stranded jobs. See docs in .env.example / README.
+ * Drain happens only in /api/cron/jobs (Vercel Cron, QStash, or external
+ * scheduler). After enqueue we optionally publish a QStash message so a
+ * *separate* invocation runs the worker — this request never embeds or indexes.
  */
-async function kickDrain(
-  types: Array<"INDEX_SOURCE" | "INDEX_ATTACHMENT" | "PURGE_NOTEBOOK">
-) {
+function resolveAppOrigin(): string | null {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const vercel = process.env.VERCEL_URL?.trim();
+  if (vercel) return `https://${vercel.replace(/^https?:\/\//, "")}`;
+
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:3000";
+  }
+
+  return null;
+}
+
+/**
+ * Wake the job worker without executing processJobs in this request.
+ * Awaits only the QStash publish ACK (milliseconds), never the drain itself.
+ */
+function requestJobDrain(): void {
+  const origin = resolveAppOrigin();
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const qstashToken = process.env.QSTASH_TOKEN?.trim();
+
+  if (!qstashToken || !origin) {
+    logger.info("job_enqueued_awaiting_cron", {
+      hasQstash: Boolean(qstashToken),
+      hasOrigin: Boolean(origin),
+      hint: "Set QSTASH_TOKEN for near-real-time drain, or hit /api/cron/jobs on a 1–5m schedule",
+    });
+    return;
+  }
+
+  const target = `${origin}/api/cron/jobs`;
+  const publishUrl = `https://qstash.upstash.io/v2/publish/${encodeURIComponent(target)}`;
+
   try {
     after(async () => {
-      // First pass: process what we just enqueued (+ a few siblings).
-      await processJobs({ limit: 5, types });
-      // Second pass: catch anything that became ready during the first pass
-      // (e.g. retries with nextRunAt ≈ now). Still within the same function.
-      await processJobs({ limit: 5, types });
+      try {
+        const response = await fetch(publishUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${qstashToken}`,
+            "Content-Type": "application/json",
+            ...(cronSecret
+              ? { "Upstash-Forward-Authorization": `Bearer ${cronSecret}` }
+              : {}),
+          },
+          body: "{}",
+        });
+        if (!response.ok) {
+          const body = await response.text().catch(() => "");
+          logger.warn("job_drain_qstash_failed", {
+            status: response.status,
+            body: body.slice(0, 200),
+          });
+        }
+      } catch (error) {
+        logger.warn("job_drain_qstash_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     });
-  } catch {
-    // Outside a Next.js request (unit tests / scripts): drain inline.
-    await processJobs({ limit: 5, types });
+  } catch (error) {
+    // after() unavailable (tests / scripts) — never fall back to processJobs.
+    logger.warn("job_drain_wake_skipped", {
+      reason: "after_unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -78,7 +131,7 @@ export async function enqueueSourceIndexing(input: {
       indexingStatus: source.indexingStatus,
     });
     if (existing.status === "PENDING" || existing.status === "RUNNING") {
-      await kickDrain(["INDEX_SOURCE"]);
+      requestJobDrain();
     }
     return;
   }
@@ -93,7 +146,7 @@ export async function enqueueSourceIndexing(input: {
     },
   });
 
-  await kickDrain(["INDEX_SOURCE"]);
+  requestJobDrain();
 }
 
 export async function enqueueAttachmentIndexing(input: {
@@ -109,20 +162,5 @@ export async function enqueueAttachmentIndexing(input: {
     },
   });
 
-  await kickDrain(["INDEX_ATTACHMENT"]);
-}
-
-/**
- * Opportunistic drain when the UI polls for indexing status.
- * Safe to call frequently — claimNextJob is a no-op when the queue is empty.
- * No-ops outside a request scope (tests/scripts).
- */
-export function scheduleOpportunisticJobDrain() {
-  try {
-    after(async () => {
-      await processJobs({ limit: 3 });
-    });
-  } catch {
-    // Ignored outside request scope.
-  }
+  requestJobDrain();
 }

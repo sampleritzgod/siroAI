@@ -12,21 +12,18 @@ import {
   type SourceRecord,
 } from "@/modules/source/service";
 
+/**
+ * Poll-only: read indexing status. Never revalidate or drain jobs.
+ * Client updates local state from the returned list.
+ */
 export async function listNotebookSources(
   notebookId: string
 ): Promise<SourceListItem[]> {
   const user = await requireUser();
-  const sources = await listSourcesForNotebook({
+  return listSourcesForNotebook({
     userId: user.id,
     notebookId,
   });
-  // Keep the shell in sync once indexing finishes (layout can stay stale on
-  // Vercel if we only router.refresh() from the client).
-  if (sources.some((source) => source.indexingStatus === "INDEXED")) {
-    revalidatePath("/");
-    revalidatePath("/c", "layout");
-  }
-  return sources;
 }
 
 export async function listAllSources(): Promise<SourceListItem[]> {
@@ -51,6 +48,7 @@ export async function renameSource(input: {
     sourceId: input.id,
     title: input.title,
   });
+  // Narrow: home page shell lists sources; avoid /c layout cascade.
   revalidatePath("/");
   return source;
 }

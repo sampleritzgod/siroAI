@@ -138,7 +138,7 @@ async function assertSourceOwner(sourceId: string, userId: string) {
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 /** Incomplete direct uploads (no extractedText yet) fail faster than mid-index jobs. */
 const STALE_INCOMPLETE_UPLOAD_MS = 2 * 60 * 1000;
-/** Avoid writing on every 1s router.refresh() while a source is indexing. */
+/** Avoid writing on every status poll while a source is indexing. */
 const STALE_SWEEP_INTERVAL_MS = 60_000;
 const lastStaleSweepAt = new Map<string, number>();
 
@@ -307,12 +307,6 @@ export async function listSourcesForNotebook(input: {
 }): Promise<SourceListItem[]> {
   await assertNotebookOwner(input.notebookId, input.userId);
   await failStaleProcessingSources({ notebookId: input.notebookId });
-
-  // Hobby plan: cron is daily — polling UI also drains stranded index jobs.
-  const { scheduleOpportunisticJobDrain } = await import(
-    "@/modules/jobs/enqueue"
-  );
-  scheduleOpportunisticJobDrain();
 
   const rows = await prisma.$queryRaw<
     Array<{

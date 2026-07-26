@@ -113,7 +113,8 @@ export function SourcesPanel({
 
   function run(action: () => Promise<void>) {
     startTransition(() => {
-      void action().then(() => router.refresh());
+      // Server action revalidatePath updates lists — avoid a second full refresh.
+      void action();
     });
   }
 
@@ -123,7 +124,6 @@ export function SourcesPanel({
       void createNotebookQuick()
         .then((created) => {
           onSelectNotebook(created.id);
-          router.refresh();
         })
         .catch((error) => {
           setCreateError(

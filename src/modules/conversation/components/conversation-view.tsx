@@ -233,7 +233,6 @@ export function ConversationView({
         messageId,
       }).then((branch) => {
         router.push(`/c/${conversationId}?branch=${branch.id}`);
-        router.refresh();
       });
     });
   }
@@ -258,7 +257,6 @@ export function ConversationView({
           } satisfies PendingEdit)
         );
         router.push(`/c/${conversationId}?branch=${branch.id}`);
-        router.refresh();
       });
     });
   }
@@ -270,9 +268,7 @@ export function ConversationView({
 
   function handleModelChange(nextModelId: string) {
     setModelId(nextModelId);
-    void updateConversation({ id: conversationId, model: nextModelId }).then(
-      () => router.refresh()
-    );
+    void updateConversation({ id: conversationId, model: nextModelId });
   }
 
   return (

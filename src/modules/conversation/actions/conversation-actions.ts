@@ -261,7 +261,9 @@ export async function createConversation(notebookId?: string | FormData) {
   });
 
   await invalidateConversationCaches({ userId: user.id });
+  // Shell conversation list + the new chat page.
   revalidatePath("/");
+  revalidatePath(`/c/${conversation.id}`);
   return { id: conversation.id, notebookId: conversation.notebookId };
 }
 
@@ -325,6 +327,7 @@ export async function updateConversation(input: {
     conversationId: input.id,
   });
 
+  // Shell lists title/pin/archive; conversation page for model/content chrome.
   revalidatePath("/");
   revalidatePath(`/c/${input.id}`);
 }
@@ -348,6 +351,6 @@ export async function deleteConversation(id: string) {
     branchIds: branches.map((branch) => branch.id),
   });
 
-  revalidatePath("/");
   revalidatePath(`/c/${id}`);
+  revalidatePath("/");
 }

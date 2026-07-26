@@ -35,7 +35,8 @@ export function SourceListSection({
 
   function run(action: () => Promise<void>) {
     startTransition(() => {
-      void action().then(() => router.refresh());
+      // Server action revalidatePath updates the shell — no full router.refresh.
+      void action();
     });
   }
 
