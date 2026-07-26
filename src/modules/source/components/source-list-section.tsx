@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { cn } from "@/lib/utils";
 import {
@@ -16,13 +15,14 @@ import { formatIndexingStatus } from "@/modules/source/status-label";
 type SourceListSectionProps = {
   notebookId: string;
   sources: SourceListItem[];
+  onSourceUploaded?: (source: SourceListItem) => void;
 };
 
 export function SourceListSection({
   notebookId,
   sources,
+  onSourceUploaded,
 }: SourceListSectionProps) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -196,7 +196,10 @@ export function SourceListSection({
         open={addOpen}
         notebookId={notebookId}
         onClose={() => setAddOpen(false)}
-        onUploaded={() => router.refresh()}
+        onUploaded={(source) => {
+          onSourceUploaded?.(source);
+          setAddOpen(false);
+        }}
       />
 
       <SourceMetadataDialog

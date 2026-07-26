@@ -13,9 +13,9 @@ import {
   isNotebookReady,
 } from "@/modules/notebook/notebook-readiness";
 import type { NotebookListItem } from "@/modules/notebook/service";
-import { listNotebookSources } from "@/modules/source/actions/source-actions";
 import { AddSourceDialog } from "@/modules/source/components/add-source-dialog";
 import type { SourceListItem } from "@/modules/source/service";
+import { useSourceIndexingSync } from "@/modules/source/use-source-indexing-sync";
 
 type MobilePanel = "sources" | "chat";
 
@@ -32,7 +32,7 @@ type NotebookWorkspaceProps = {
 export function NotebookWorkspace({
   notebook,
   notebooks,
-  sources,
+  sources: serverSources,
   conversations,
   onSelectNotebook,
   onNotebookDeleted,
@@ -41,33 +41,21 @@ export function NotebookWorkspace({
   const pathname = usePathname();
   const router = useRouter();
   const isChatRoute = pathname.startsWith("/c/");
-  // Fresh poll can beat a stale RSC payload after indexing finishes.
-  const [pollNotebookId, setPollNotebookId] = useState(notebook.id);
-  const [polledSources, setPolledSources] = useState<SourceListItem[] | null>(
-    null
-  );
-  if (pollNotebookId !== notebook.id) {
-    setPollNotebookId(notebook.id);
-    setPolledSources(null);
-  }
-  // Prefer server props once they show INDEXED; otherwise use the live poll.
-  const effectiveSources = isNotebookReady(sources)
-    ? sources
-    : (polledSources ?? sources);
-  const ready = useMemo(
-    () => isNotebookReady(effectiveSources),
-    [effectiveSources]
-  );
-  const indexing = useMemo(
-    () => isNotebookIndexing(effectiveSources),
-    [effectiveSources]
-  );
+
+  const { sources, acceptUploadedSource, refreshFromServer } =
+    useSourceIndexingSync({
+      notebookId: notebook.id,
+      serverSources,
+    });
+
+  const ready = useMemo(() => isNotebookReady(sources), [sources]);
+  const indexing = useMemo(() => isNotebookIndexing(sources), [sources]);
   // Every source failed: show the failure panel, not "this notebook is empty".
   const allFailed = useMemo(
     () =>
-      effectiveSources.length > 0 &&
-      effectiveSources.every((source) => source.indexingStatus === "FAILED"),
-    [effectiveSources]
+      sources.length > 0 &&
+      sources.every((source) => source.indexingStatus === "FAILED"),
+    [sources]
   );
   const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
@@ -87,40 +75,6 @@ export function NotebookWorkspace({
       router.replace("/");
     }
   }, [ready, isChatRoute, router]);
-
-  // Poll the DB directly while indexing. router.refresh() alone can leave a
-  // stale layout payload on Vercel, so the spinner never exits even after
-  // sources are INDEXED.
-  useEffect(() => {
-    if (isNotebookReady(sources)) return;
-    // Nothing in flight (empty notebook, or every source FAILED) — don't poll.
-    if (!isNotebookIndexing(sources)) return;
-
-    let cancelled = false;
-
-    async function tick() {
-      try {
-        const fresh = await listNotebookSources(notebook.id);
-        if (cancelled) return;
-        setPolledSources(fresh);
-        if (isNotebookReady(fresh)) {
-          router.refresh();
-        }
-      } catch {
-        // Next tick retries.
-      }
-    }
-
-    void tick();
-    const timer = window.setInterval(() => {
-      void tick();
-    }, 1500);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [notebook.id, sources, router]);
 
   useEffect(() => {
     resumeAttempt.current = null;
@@ -173,13 +127,8 @@ export function NotebookWorkspace({
 
   const setupContent = indexing || allFailed ? (
     <NotebookIndexingStatus
-      sources={effectiveSources}
-      onRefresh={() => {
-        setPolledSources(null);
-        void listNotebookSources(notebook.id).then((fresh) => {
-          setPolledSources(fresh);
-        });
-      }}
+      sources={sources}
+      onRefresh={refreshFromServer}
     />
   ) : (
     <NotebookOnboarding onAddSource={() => setAddSourceOpen(true)} />
@@ -231,10 +180,11 @@ export function NotebookWorkspace({
     <SourcesPanel
       notebook={notebook}
       notebooks={notebooks}
-      sources={effectiveSources}
+      sources={sources}
       conversations={conversations}
       onSelectNotebook={onSelectNotebook}
       onNotebookDeleted={onNotebookDeleted}
+      onSourceUploaded={acceptUploadedSource}
       variant={indexing ? "indexing" : "default"}
     />
   );
@@ -261,9 +211,9 @@ export function NotebookWorkspace({
           open={addSourceOpen}
           notebookId={notebook.id}
           onClose={() => setAddSourceOpen(false)}
-          onUploaded={() => {
+          onUploaded={(source) => {
+            acceptUploadedSource(source);
             setAddSourceOpen(false);
-            router.refresh();
           }}
         />
       </div>

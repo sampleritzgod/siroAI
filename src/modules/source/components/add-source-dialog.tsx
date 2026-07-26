@@ -13,6 +13,11 @@ import {
   requiresDirectUpload,
   uploadSizeErrorMessage,
 } from "@/modules/files/upload-size";
+import type {
+  SourceIndexingStatus,
+  SourceType,
+} from "@/generated/prisma/client";
+import type { SourceListItem } from "@/modules/source/service";
 
 const UPLOAD_STEPS = [
   "Uploading file…",
@@ -33,11 +38,47 @@ const YOUTUBE_STEPS = [
   "Queuing indexing…",
 ] as const;
 
+export type UploadedSourcePayload = {
+  id: string;
+  notebookId: string;
+  type: string;
+  title: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSize: number;
+  url?: string | null;
+  metadata?: unknown;
+  indexingStatus: string;
+  hasExtractedText?: boolean;
+};
+
+export function toSourceListItemFromUpload(
+  payload: UploadedSourcePayload
+): SourceListItem {
+  const now = new Date();
+  return {
+    id: payload.id,
+    notebookId: payload.notebookId,
+    type: payload.type as SourceType,
+    title: payload.title,
+    originalFileName: payload.originalFileName,
+    mimeType: payload.mimeType,
+    fileSize: payload.fileSize,
+    url: payload.url ?? null,
+    metadata: (payload.metadata as SourceListItem["metadata"]) ?? null,
+    indexingStatus: payload.indexingStatus as SourceIndexingStatus,
+    hasExtractedText: Boolean(payload.hasExtractedText),
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 type AddSourceDialogProps = {
   open: boolean;
   notebookId: string | null;
   onClose: () => void;
-  onUploaded: () => void;
+  /** Called with the created source so the UI can upsert without a page refresh. */
+  onUploaded: (source: SourceListItem) => void;
 };
 
 export function AddSourceDialog({
@@ -65,7 +106,7 @@ function AddSourceDialogForm({
 }: {
   notebookId: string;
   onClose: () => void;
-  onUploaded: () => void;
+  onUploaded: (source: SourceListItem) => void;
 }) {
   const titleId = useId();
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -327,9 +368,9 @@ function AddSourceDialogForm({
   }
 
   async function handleSourceResponse(response: Response, fileSize?: number) {
-    const payload = (await response.json().catch(() => null)) as {
-      error?: string;
-    } | null;
+    const payload = (await response.json().catch(() => null)) as
+      | (UploadedSourcePayload & { error?: string })
+      | null;
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -364,7 +405,12 @@ function AddSourceDialogForm({
       return;
     }
 
-    onUploaded();
+    if (!payload?.id || !payload.notebookId || !payload.indexingStatus) {
+      setError("Unexpected server response");
+      return;
+    }
+
+    onUploaded(toSourceListItemFromUpload(payload));
     onClose();
   }
 

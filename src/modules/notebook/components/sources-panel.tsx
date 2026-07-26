@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,8 @@ type SourcesPanelProps = {
   conversations: ConversationListItem[];
   onSelectNotebook: (notebookId: string) => void;
   onNotebookDeleted: (notebookId: string) => void;
+  /** Upsert a newly uploaded source into parent local state (no page refresh). */
+  onSourceUploaded?: (source: SourceListItem) => void;
   /** While indexing, show a quiet sidebar (no search / chats / add). */
   variant?: "default" | "indexing";
 };
@@ -43,11 +45,11 @@ export function SourcesPanel({
   conversations,
   onSelectNotebook,
   onNotebookDeleted,
+  onSourceUploaded,
   variant = "default",
 }: SourcesPanelProps) {
   const isIndexing = variant === "indexing";
   const pathname = usePathname();
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [notebookActions, setNotebookActions] =
@@ -489,7 +491,10 @@ export function SourcesPanel({
         open={addOpen}
         notebookId={notebook.id}
         onClose={() => setAddOpen(false)}
-        onUploaded={() => router.refresh()}
+        onUploaded={(source) => {
+          onSourceUploaded?.(source);
+          setAddOpen(false);
+        }}
       />
 
       <SourceMetadataDialog
