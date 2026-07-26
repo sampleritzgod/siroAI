@@ -9,6 +9,7 @@ import {
   s3PutObject,
 } from "@/modules/files/s3";
 import {
+  buildAttachmentPageStorageKey,
   deleteStoredUpload,
   resolveStorageFromPath,
   storedObjectExists,
@@ -96,6 +97,16 @@ function mockS3(options?: {
       if (name === "DeleteObjectCommand") {
         objects.delete(String(command.input.Key));
         return {};
+      }
+
+      if (name === "ListObjectsV2Command") {
+        const prefix = String(command.input.Prefix ?? "");
+        return {
+          Contents: [...objects.keys()]
+            .filter((key) => key.startsWith(prefix))
+            .map((Key) => ({ Key })),
+          IsTruncated: false,
+        };
       }
 
       throw new Error(`Unexpected command ${name}`);
@@ -220,6 +231,45 @@ describe("S3 storage layer", () => {
       storageKey: "attachments/del/x.pdf",
     });
     assert.equal(objects.has("attachments/del/x.pdf"), false);
+  });
+
+  it("deletes rendered PDF page images along with the file", async () => {
+    enableS3Env();
+    const { client, objects } = mockS3();
+    setS3ClientForTests(client);
+
+    await s3PutObject({
+      key: "attachments/pages/doc.pdf",
+      body: Buffer.from("pdf"),
+      contentType: "application/pdf",
+    });
+    await s3PutObject({
+      key: buildAttachmentPageStorageKey("pages", 1),
+      body: Buffer.from("png-1"),
+      contentType: "image/png",
+    });
+    await s3PutObject({
+      key: buildAttachmentPageStorageKey("pages", 2),
+      body: Buffer.from("png-2"),
+      contentType: "image/png",
+    });
+    assert.equal(objects.size, 3);
+
+    await deleteStoredUpload({
+      objectId: "pages",
+      storage: "S3",
+      storageKey: "attachments/pages/doc.pdf",
+    });
+
+    assert.equal(objects.size, 0);
+  });
+
+  it("keys page images beside the source file", () => {
+    assert.equal(
+      buildAttachmentPageStorageKey("abc", 3),
+      "attachments/abc/pages/3.png"
+    );
+    assert.equal(resolveStorageFromPath("attachments/abc/pages/3.png"), "S3");
   });
 
   it("reports missing objects via exists + typed download error", async () => {

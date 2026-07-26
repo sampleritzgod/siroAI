@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { isRedisConfigured, getRedis } from "@/lib/cache/redis";
 import { logger } from "@/lib/logger";
 import { isProductionRuntime } from "@/lib/runtime";
+import { isS3Configured } from "@/modules/files/s3";
+import { isVercelBlobConfigured } from "@/modules/files/storage";
 
 /**
  * Shared readiness probe for /api/ready and startup validation.
@@ -12,7 +14,7 @@ export async function checkReadiness() {
     database: "error",
     redis: "skipped",
     openai: "skipped",
-    blob: "skipped",
+    storage: "skipped",
     clerk: "skipped",
   };
 
@@ -42,14 +44,12 @@ export async function checkReadiness() {
     checks.openai = "error";
   }
 
-  const blobConfigured = Boolean(
-    process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
-      process.env.BLOB_STORE_ID?.trim()
-  );
-  if (blobConfigured) {
-    checks.blob = "ok";
+  // S3 is the primary backend; Vercel Blob remains valid for legacy deploys.
+  const storageConfigured = isS3Configured() || isVercelBlobConfigured();
+  if (storageConfigured) {
+    checks.storage = "ok";
   } else if (process.env.VERCEL === "1") {
-    checks.blob = "error";
+    checks.storage = "error";
   }
 
   if (
@@ -65,7 +65,7 @@ export async function checkReadiness() {
     checks.database === "ok" &&
     checks.redis !== "error" &&
     checks.openai !== "error" &&
-    checks.blob !== "error" &&
+    checks.storage !== "error" &&
     checks.clerk === "ok";
 
   return {

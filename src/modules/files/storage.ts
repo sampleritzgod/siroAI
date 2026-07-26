@@ -6,6 +6,7 @@ import { isAppError, storageError } from "@/lib/errors";
 import {
   isS3Configured,
   s3DeleteObject,
+  s3DeletePrefix,
   s3GetObject,
   s3GetObjectBytes,
   s3GetPutSignedUrl,
@@ -103,6 +104,24 @@ export function buildAttachmentStorageKey(
   filename: string
 ): string {
   return `attachments/${attachmentId}/${sanitizeFilename(filename)}`;
+}
+
+/** Rendered PDF page image key — sibling of the object's file key. */
+export function buildAttachmentPageStorageKey(
+  attachmentId: string,
+  page: number
+): string {
+  return `attachments/${attachmentId}/pages/${page}.png`;
+}
+
+/**
+ * All keys for one object share the `<prefix>/<objectId>/` namespace
+ * (file + rendered pages), so deletes must clear the whole prefix.
+ */
+function storageKeyPrefix(storageKey: string): string | null {
+  const lastSlash = storageKey.lastIndexOf("/");
+  if (lastSlash <= 0) return null;
+  return `${storageKey.slice(0, lastSlash)}/`;
 }
 
 /** Presigned PUT for browser → S3 direct upload (when S3 is configured). */
@@ -335,6 +354,15 @@ export async function deleteStoredUpload(input: {
       await s3DeleteObject(input.storageKey);
     } catch {
       // Object may already be gone; continue.
+    }
+    // Also remove sibling keys (rendered PDF page images) so nothing orphans.
+    const prefix = storageKeyPrefix(input.storageKey);
+    if (prefix) {
+      try {
+        await s3DeletePrefix(prefix);
+      } catch {
+        // Best-effort cleanup.
+      }
     }
     return;
   }

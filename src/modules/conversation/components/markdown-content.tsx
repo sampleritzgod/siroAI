@@ -1,15 +1,24 @@
 "use client";
 
+import { useMemo } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+import {
+  linkifyCitationMarkers,
+  parseCitationHref,
+} from "@/modules/conversation/citation-markers";
+import { useSourceViewer } from "@/modules/conversation/components/source-viewer-provider";
+import type { MessageCitation } from "@/modules/rag/citation-types";
 
 type MarkdownContentProps = {
   content: string;
   className?: string;
+  /** When provided, inline `[n]` markers become clickable citations. */
+  citations?: MessageCitation[];
 };
 
 const components: Components = {
@@ -116,8 +125,71 @@ const components: Components = {
 
 /**
  * Renders assistant markdown (headings, lists, fenced code with highlighting).
+ * Inline `[n]` markers become clickable citations when `citations` is supplied.
  */
-export function MarkdownContent({ content, className }: MarkdownContentProps) {
+export function MarkdownContent({
+  content,
+  className,
+  citations,
+}: MarkdownContentProps) {
+  const viewer = useSourceViewer();
+
+  const citationByIndex = useMemo(() => {
+    const map = new Map<number, MessageCitation>();
+    for (const citation of citations ?? []) {
+      map.set(citation.index, citation);
+    }
+    return map;
+  }, [citations]);
+
+  // Only linkify markers that resolve to a citation the viewer can open.
+  const linkable = useMemo(() => {
+    if (!viewer || citationByIndex.size === 0) return new Set<number>();
+    return new Set(citationByIndex.keys());
+  }, [viewer, citationByIndex]);
+
+  const renderedContent = useMemo(
+    () => linkifyCitationMarkers(content, linkable),
+    [content, linkable]
+  );
+
+  const mergedComponents = useMemo<Components>(() => {
+    if (linkable.size === 0) return components;
+
+    return {
+      ...components,
+      a: ({ href, children }) => {
+        const index = parseCitationHref(href);
+        const citation = index ? citationByIndex.get(index) : null;
+
+        if (!citation || !viewer) {
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[var(--accent)] underline underline-offset-2 hover:opacity-90"
+            >
+              {children}
+            </a>
+          );
+        }
+
+        return (
+          <button
+            type="button"
+            onClick={() => viewer.openCitation(citation)}
+            title={`${citation.filename} · chunk ${citation.chunkIndex + 1} · score ${citation.score.toFixed(2)}`}
+            aria-label={`Open source ${citation.filename}, chunk ${citation.chunkIndex + 1}`}
+            className="mx-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-md bg-[var(--accent)]/15 px-1 align-baseline text-[0.75em] font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/30"
+          >
+            {citation.index}
+          </button>
+        );
+      },
+    };
+  }, [linkable, citationByIndex, viewer]);
+
   if (!content) return null;
 
   return (
@@ -127,8 +199,8 @@ export function MarkdownContent({ content, className }: MarkdownContentProps) {
         className
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {content}
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={mergedComponents}>
+        {renderedContent}
       </ReactMarkdown>
     </div>
   );

@@ -62,6 +62,13 @@ export function NotebookWorkspace({
     () => isNotebookIndexing(effectiveSources),
     [effectiveSources]
   );
+  // Every source failed: show the failure panel, not "this notebook is empty".
+  const allFailed = useMemo(
+    () =>
+      effectiveSources.length > 0 &&
+      effectiveSources.every((source) => source.indexingStatus === "FAILED"),
+    [effectiveSources]
+  );
   const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
   const [openingChat, setOpeningChat] = useState(false);
@@ -86,7 +93,8 @@ export function NotebookWorkspace({
   // sources are INDEXED.
   useEffect(() => {
     if (isNotebookReady(sources)) return;
-    if (!isNotebookIndexing(sources) && sources.length === 0) return;
+    // Nothing in flight (empty notebook, or every source FAILED) — don't poll.
+    if (!isNotebookIndexing(sources)) return;
 
     let cancelled = false;
 
@@ -164,7 +172,7 @@ export function NotebookWorkspace({
     router,
   ]);
 
-  const setupContent = indexing ? (
+  const setupContent = indexing || allFailed ? (
     <NotebookIndexingStatus
       sources={effectiveSources}
       onRefresh={() => {

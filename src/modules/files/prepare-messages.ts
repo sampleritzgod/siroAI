@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { isImageMediaType } from "@/modules/files/constants";
 import { parsePdfVisionPayload } from "@/modules/files/extract-text";
 import {
+  buildAttachmentPageStorageKey,
   readLocalUpload,
   readStoredUploadBytes,
 } from "@/modules/files/storage";
@@ -42,19 +43,24 @@ async function resolveLocalFileUrl(
   const attachmentId = parts[0];
   if (!attachmentId) return url;
 
-  if (parts[1] === "page" && parts[2]) {
-    const page = Number(parts[2]);
-    if (!Number.isFinite(page)) return url;
-    const bytes = await readLocalUpload(
-      `${attachmentId}/pages/${page}.png`
-    );
-    return toDataUrl("image/png", bytes);
-  }
-
   const attachment = await prisma.attachment.findUnique({
     where: { id: attachmentId },
     select: { storage: true, storageKey: true, mediaType: true },
   });
+
+  if (parts[1] === "page" && parts[2]) {
+    const page = Number(parts[2]);
+    if (!Number.isFinite(page)) return url;
+    // Page images follow the attachment's own backend (S3 keys, else local disk).
+    const bytes =
+      attachment?.storage === "S3"
+        ? await readStoredUploadBytes({
+            storage: "S3",
+            storageKey: buildAttachmentPageStorageKey(attachmentId, page),
+          })
+        : await readLocalUpload(`${attachmentId}/pages/${page}.png`);
+    return toDataUrl("image/png", bytes);
+  }
 
   if (!attachment) return url;
 

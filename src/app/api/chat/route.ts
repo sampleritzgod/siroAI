@@ -2,6 +2,7 @@ import {
   consumeStream,
   convertToModelMessages,
   createIdGenerator,
+  createUIMessageStream,
   createUIMessageStreamResponse,
   isStepCount,
   isTextUIPart,
@@ -17,6 +18,7 @@ import {
   rateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit";
+import { withCitationsPart } from "@/modules/ai/attach-citations";
 import {
   deleteBranchMessagesAfter,
   extractMessageText,
@@ -37,6 +39,11 @@ import { requireUser } from "@/modules/auth/actions/require-user";
 import { prepareMessagesForModel } from "@/modules/files/prepare-messages";
 import { conversationHasIndexedChunks } from "@/modules/rag/index-attachment";
 import { notebookHasIndexedChunks } from "@/modules/rag/index-source";
+import { buildMessageCitations } from "@/modules/rag/build-citations";
+import {
+  CITATIONS_PART_TYPE,
+  type MessageCitation,
+} from "@/modules/rag/citation-types";
 import { stageLog } from "@/modules/rag/pipeline-log";
 import {
   formatRetrievedContext,
@@ -240,6 +247,8 @@ export async function POST(req: Request) {
     let ragContext = "";
     let retrievedCount = 0;
     let retrievalAttempted = false;
+    // UI-only: lets the client resolve inline [n] markers to real sources.
+    let citations: MessageCitation[] = [];
     try {
       const hasNotebookChunks = await notebookHasIndexedChunks(notebookId);
       const hasAttachmentChunks = await conversationHasIndexedChunks(id);
@@ -278,6 +287,8 @@ export async function POST(req: Request) {
           });
           retrievedCount = chunks.length;
           ragContext = formatRetrievedContext(chunks);
+          // Same order formatRetrievedContext numbered them with.
+          citations = await buildMessageCitations(chunks);
 
           if (chunks.length === 0) {
             logger.warn("[RETRIEVE] zero_chunks", {
@@ -466,25 +477,46 @@ export async function POST(req: Request) {
 
     result.consumeStream();
 
+    const uiStream = toUIMessageStream({
+      stream: result.stream,
+      originalMessages: messages,
+      generateMessageId: createIdGenerator({ prefix: "msg", size: 16 }),
+      onEnd: async ({ messages: finalMessages }) => {
+        try {
+          await saveChatMessages(
+            id,
+            resolvedBranchId,
+            withCitationsPart(finalMessages, citations),
+            { updateTitle: false }
+          );
+        } catch (error) {
+          await captureException(error, {
+            requestId,
+            conversationId: id,
+            stage: "persist",
+          });
+        }
+      },
+    });
+
+    // Citations ride along as a UI-only data part: streamed for the live answer
+    // and persisted on the message so they survive a reload.
+    const stream =
+      citations.length > 0
+        ? createUIMessageStream({
+            execute: ({ writer }) => {
+              writer.write({
+                type: CITATIONS_PART_TYPE,
+                id: "citations",
+                data: citations,
+              });
+              writer.merge(uiStream);
+            },
+          })
+        : uiStream;
+
     return createUIMessageStreamResponse({
-      stream: toUIMessageStream({
-        stream: result.stream,
-        originalMessages: messages,
-        generateMessageId: createIdGenerator({ prefix: "msg", size: 16 }),
-        onEnd: async ({ messages: finalMessages }) => {
-          try {
-            await saveChatMessages(id, resolvedBranchId, finalMessages, {
-              updateTitle: false,
-            });
-          } catch (error) {
-            await captureException(error, {
-              requestId,
-              conversationId: id,
-              stage: "persist",
-            });
-          }
-        },
-      }),
+      stream,
       consumeSseStream: consumeStream,
       headers: {
         "X-Request-Id": requestId,

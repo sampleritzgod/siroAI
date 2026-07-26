@@ -424,6 +424,7 @@ async function assertNoDuplicateVtt(input: {
   notebookId: string;
   originalFileName: string;
   fileSize: number;
+  excludeSourceId?: string;
 }) {
   const duplicate = await prisma.source.findFirst({
     where: {
@@ -431,6 +432,7 @@ async function assertNoDuplicateVtt(input: {
       type: "VTT",
       originalFileName: input.originalFileName,
       fileSize: input.fileSize,
+      ...(input.excludeSourceId ? { NOT: { id: input.excludeSourceId } } : {}),
     },
     select: { id: true },
   });
@@ -890,6 +892,26 @@ export async function completeSourceDirectUpload(input: {
     throw payloadTooLarge(uploadSizeErrorMessage(sizeCheck));
   }
 
+  if (source.type === "VTT") {
+    // Presign only saw the client-declared size; re-check against real bytes.
+    try {
+      await assertNoDuplicateVtt({
+        notebookId: source.notebookId,
+        originalFileName: source.originalFileName,
+        fileSize: bytes.length,
+        excludeSourceId: source.id,
+      });
+    } catch (error) {
+      await deleteStoredUpload({
+        objectId: source.id,
+        storage: "S3",
+        storageKey,
+      }).catch(() => {});
+      await prisma.source.delete({ where: { id: source.id } }).catch(() => {});
+      throw error;
+    }
+  }
+
   try {
     let parsedVtt: ParsedVtt | null = null;
     let extractedText: string | null = null;
@@ -1009,23 +1031,21 @@ export async function completeSourceDirectUpload(input: {
       // Best-effort.
     }
 
+    // Parity with the multipart path: keep the row and surface FAILED so the
+    // source never silently disappears from the sidebar.
     try {
       await prisma.$executeRaw`
         DELETE FROM "DocumentChunk" WHERE "sourceId" = ${source.id}
       `;
-      await prisma.source.delete({ where: { id: source.id } });
+      await prisma.source.update({
+        where: { id: source.id },
+        data: {
+          indexingStatus: "FAILED",
+          extractedText: null,
+        },
+      });
     } catch {
-      try {
-        await prisma.source.update({
-          where: { id: source.id },
-          data: {
-            indexingStatus: "FAILED",
-            extractedText: null,
-          },
-        });
-      } catch {
-        // Best-effort.
-      }
+      // Best-effort status update.
     }
 
     throw error instanceof Error

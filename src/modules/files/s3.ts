@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
@@ -212,6 +213,52 @@ export async function s3DeleteObject(key: string): Promise<void> {
     );
   } catch (error) {
     toStorageError(error, "Storage error: S3 delete failed");
+  }
+}
+
+/** List every key under a prefix (paginated). */
+export async function s3ListKeys(prefix: string): Promise<string[]> {
+  try {
+    const client = getS3Client();
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const result = (await client.send(
+        new ListObjectsV2Command({
+          Bucket: getS3Bucket(),
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      )) as {
+        Contents?: Array<{ Key?: string }>;
+        IsTruncated?: boolean;
+        NextContinuationToken?: string;
+      };
+
+      for (const item of result.Contents ?? []) {
+        if (item.Key) keys.push(item.Key);
+      }
+
+      continuationToken = result.IsTruncated
+        ? result.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
+
+    return keys;
+  } catch (error) {
+    toStorageError(error, "Storage error: S3 list failed");
+  }
+}
+
+/**
+ * Delete every object under a prefix.
+ * Needed because a source owns more than one key (file + rendered PDF pages).
+ */
+export async function s3DeletePrefix(prefix: string): Promise<void> {
+  const keys = await s3ListKeys(prefix);
+  for (const key of keys) {
+    await s3DeleteObject(key);
   }
 }
 

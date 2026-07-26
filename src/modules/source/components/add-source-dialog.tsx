@@ -231,10 +231,8 @@ function AddSourceDialogForm({
             }),
           });
 
-          if (!completeResponse.ok) {
-            await abortOrphanSource();
-          }
-
+          // A failed complete leaves the source as FAILED server-side, so it
+          // stays visible in the sidebar instead of being aborted here.
           await handleSourceResponse(completeResponse);
           return;
         } catch (error) {

@@ -2,7 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { extractText, renderPageAsImage } from "unpdf";
 import { put } from "@vercel/blob";
-import { isVercelBlobConfigured } from "@/modules/files/storage";
+import { isS3Configured, s3PutObject } from "@/modules/files/s3";
+import {
+  buildAttachmentPageStorageKey,
+  isVercelBlobConfigured,
+} from "@/modules/files/storage";
 
 const MAX_VISION_PAGES = 6;
 const RENDER_SCALE = 1.2;
@@ -95,6 +99,16 @@ async function persistPageImage(input: {
   pageNumber: number;
   png: Buffer;
 }): Promise<string | null> {
+  // Same backend priority as storeUpload — page images must live beside the file.
+  if (isS3Configured()) {
+    await s3PutObject({
+      key: buildAttachmentPageStorageKey(input.attachmentId, input.pageNumber),
+      body: input.png,
+      contentType: "image/png",
+    });
+    return `/api/files/${input.attachmentId}/page/${input.pageNumber}`;
+  }
+
   if (isVercelBlobConfigured()) {
     const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
     const blob = await put(

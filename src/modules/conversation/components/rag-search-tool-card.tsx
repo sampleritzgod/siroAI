@@ -6,6 +6,7 @@ import {
   isRagSearchToolResult,
   type RagSearchToolResult,
 } from "@/modules/ai/tools/rag-types";
+import { useSourceViewer } from "@/modules/conversation/components/source-viewer-provider";
 
 type ToolPart = Extract<
   UIMessage["parts"][number],
@@ -26,6 +27,7 @@ export function RagSearchToolCard({
   part,
   settlePending = false,
 }: RagSearchToolCardProps) {
+  const viewer = useSourceViewer();
   const pending =
     part.state === "input-streaming" ||
     part.state === "input-available" ||
@@ -50,27 +52,60 @@ export function RagSearchToolCard({
 
       {result?.ok ? (
         <ul className="flex flex-col gap-1.5">
-          {result.results.map((item, index) => (
-            <li
-              key={`${item.sourceId ?? item.attachmentId ?? "doc"}-${item.chunkIndex}-${index}`}
-              className="rounded-lg bg-[var(--background)]/60 px-2 py-1.5"
-            >
-              <div className="flex items-baseline gap-1.5">
-                <span className="font-medium text-[var(--accent)]">
-                  [{index + 1}]
-                </span>
-                <span className="truncate font-medium text-[var(--foreground)]">
-                  {item.filename}
-                </span>
-                <span className="shrink-0 text-[10px] text-[var(--muted)]">
-                  chunk {item.chunkIndex + 1}
-                </span>
-              </div>
-              <p className="mt-0.5 line-clamp-3 text-[var(--muted)]">
-                {item.snippet}
-              </p>
-            </li>
-          ))}
+          {result.results.map((item, index) => {
+            const canOpen =
+              Boolean(viewer) && Boolean(item.sourceId || item.attachmentId);
+
+            const body = (
+              <>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-medium text-[var(--accent)]">
+                    [{index + 1}]
+                  </span>
+                  <span className="truncate font-medium text-[var(--foreground)]">
+                    {item.filename}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-[var(--muted)]">
+                    chunk {item.chunkIndex + 1}
+                    {typeof item.score === "number"
+                      ? ` · score ${item.score.toFixed(2)}`
+                      : ""}
+                  </span>
+                </div>
+                <p className="mt-0.5 line-clamp-3 text-left text-[var(--muted)]">
+                  {item.snippet}
+                </p>
+              </>
+            );
+
+            return (
+              <li
+                key={`${item.sourceId ?? item.attachmentId ?? "doc"}-${item.chunkIndex}-${index}`}
+              >
+                {canOpen ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      viewer?.openTarget({
+                        sourceId: item.sourceId,
+                        attachmentId: item.attachmentId,
+                        chunkIndex: item.chunkIndex,
+                        page: null,
+                        fallbackTitle: item.filename,
+                      })
+                    }
+                    className="w-full rounded-lg bg-[var(--background)]/60 px-2 py-1.5 text-left transition-colors hover:bg-[var(--background)] hover:ring-1 hover:ring-[var(--accent)]"
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className="rounded-lg bg-[var(--background)]/60 px-2 py-1.5">
+                    {body}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 

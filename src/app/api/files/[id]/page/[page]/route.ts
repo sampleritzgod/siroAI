@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/modules/auth/actions/require-user";
-import { getLocalPagePath } from "@/modules/files/storage";
+import {
+  buildAttachmentPageStorageKey,
+  getLocalPagePath,
+  readStoredUploadBytes,
+} from "@/modules/files/storage";
 
 type RouteContext = {
   params: Promise<{ id: string; page: string }>;
@@ -67,7 +71,14 @@ export async function GET(_req: Request, context: RouteContext) {
       );
     }
 
-    const bytes = await readFile(getLocalPagePath(id, page));
+    const bytes =
+      attachment.storage === "S3"
+        ? await readStoredUploadBytes({
+            storage: "S3",
+            storageKey: buildAttachmentPageStorageKey(id, page),
+          })
+        : await readFile(getLocalPagePath(id, page));
+
     return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {

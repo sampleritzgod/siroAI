@@ -8,10 +8,12 @@ import {
 } from "ai";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { CitationList } from "@/modules/conversation/components/citation-list";
 import { MarkdownContent } from "@/modules/conversation/components/markdown-content";
 import { RagSearchToolCard } from "@/modules/conversation/components/rag-search-tool-card";
 import { ThinkingIndicator } from "@/modules/conversation/components/thinking-indicator";
 import { WebSearchToolCard } from "@/modules/conversation/components/web-search-tool-card";
+import { readCitationsFromParts } from "@/modules/rag/citation-types";
 
 type ChatMessagesProps = {
   messages: UIMessage[];
@@ -60,6 +62,7 @@ export function ChatMessages({
         const text = getText(message);
         const toolParts = message.parts.filter(isToolUIPart);
         const fileParts = message.parts.filter(isFileUIPart);
+        const citations = readCitationsFromParts(message.parts);
         const isUser = message.role === "user";
         const isEditing = editingId === message.id;
         const canShowBubble =
@@ -193,7 +196,7 @@ export function ChatMessages({
                   isUser ? (
                     text
                   ) : (
-                    <MarkdownContent content={text} />
+                    <MarkdownContent content={text} citations={citations} />
                   )
                 ) : isThinking ? (
                   ""
@@ -201,6 +204,10 @@ export function ChatMessages({
                   "…"
                 )}
               </div>
+            ) : null}
+
+            {!isUser && !isEditing && text ? (
+              <CitationList citations={citations} />
             ) : null}
 
             {!isEditing &&

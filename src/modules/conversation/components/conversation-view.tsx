@@ -18,6 +18,7 @@ import type { ShareState } from "@/modules/conversation/actions/share-actions";
 import { BranchSwitcher } from "@/modules/conversation/components/branch-switcher";
 import { ChatComposer } from "@/modules/conversation/components/chat-composer";
 import { ChatMessages } from "@/modules/conversation/components/chat-messages";
+import { SourceViewerProvider } from "@/modules/conversation/components/source-viewer-provider";
 import { ShareControls } from "@/modules/conversation/components/share-controls";
 import {
   clearPendingStarterPrompt,
@@ -275,6 +276,7 @@ export function ConversationView({
   }
 
   return (
+    <SourceViewerProvider>
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 sm:gap-3 sm:px-4">
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
@@ -360,5 +362,6 @@ export function ConversationView({
         }}
       />
     </div>
+    </SourceViewerProvider>
   );
 }
